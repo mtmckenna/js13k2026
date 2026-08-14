@@ -7,6 +7,9 @@ module.exports = merge(common, {
     devServer: {
         hot: false,
         host: "0.0.0.0",
+        // Pinned so the iPad bookmark never breaks; webpack silently picks a
+        // different port if this one is taken, which makes the URL a moving target.
+        port: 8081,
         allowedHosts: "all",
         headers: {
             'Cache-Control': 'max-age=0',

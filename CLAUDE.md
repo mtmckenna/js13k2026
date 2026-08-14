@@ -1,0 +1,75 @@
+# js13k 2026
+
+Game jam entry. Hard constraint: **the zipped build must be ≤ 13312 bytes.** Check with
+`npm run party` before assuming anything fits.
+
+## Layout
+
+- `src/index.ts` — game code (entry point)
+- `src/index.html` — the shell; CSS lives inline here
+- `assets/` — images/audio, inlined into the bundle as data URIs at build time
+- `scripts/shot.js` — headless-Chrome screenshot + input + error harness (see below)
+
+## Remote workflow (iPad + rootshell)
+
+Dev happens over SSH from the iPad into `chopper`, inside a tmux session. Two things
+follow from that:
+
+1. **Run `npm start` inside tmux.** The iPad sleeping drops SSH, but tmux keeps the
+   server alive — reattach and it's still going. Don't run it outside tmux.
+2. **There is no JS console on the iPad.** A TypeScript runtime error is otherwise
+   invisible — the canvas just goes blank. `npm run shot` surfaces those errors as text.
+
+### The loop
+
+```
+npm start                    # dev server, foreground, Ctrl-C to stop
+# edit src/index.ts in rootshell
+# Safari on the iPad auto-reloads -- live reload is on
+npm run shot                 # capture what the page actually rendered + any errors
+```
+
+Viewing the game on the iPad — Tailscale, so it works off your home network too:
+
+    http://100.68.161.125:8081/          (chopper's tailscale IP)
+    http://chopper.taildd40e8.ts.net:8081/
+
+Port **8081 is pinned** in `webpack.dev.cjs`. Don't unpin it — webpack silently walks to
+the next free port when one is taken, which would break the iPad bookmark.
+
+### Screenshot harness
+
+`scripts/shot.js` drives headless Chrome over the DevTools Protocol. No dependencies —
+it uses Node 22's native `WebSocket`, deliberately, to keep the repo light.
+
+```
+npm run shot                                          # shots/shot.png
+npm run shot -- --keys "ArrowRight:600"               # hold right 600ms, then capture
+npm run shot -- --keys "ArrowRight+ArrowUp:400"       # chord with +
+npm run shot -- --keys "Space:80,ArrowLeft:300"       # sequence with ,
+npm run shot -- --size 1024x768 --out shots/ipad.png  # emulate the iPad viewport
+```
+
+It prints everything the page logged and **exits non-zero on an uncaught error**, so it
+works as a smoke test. Network 404s (favicon) are ignored on purpose.
+
+For Claude: this is how you verify a change actually works. Take a shot, then read the
+PNG — don't claim a rendering or input change is fixed without looking at it.
+
+## Build
+
+- `npm run build` — inlined `dist/index.html` + `dist/report.html` (bundle analyzer, for
+  finding what's eating the budget)
+- `npm run party` — build, Roadroller-pack, zip to `zipped/game.zip`, assert ≤ 13312 bytes
+
+Baseline starter measures ~1.5kB zipped.
+
+## Gotchas
+
+- `chalk` and `terser-webpack-plugin` are used by the build but were previously undeclared
+  — they only resolved via transitive hoisting. They're now explicit in `devDependencies`;
+  don't remove them.
+- If port 8081 is refused, something is already holding it. Find it with
+  `ss -ltnp | grep 8081` rather than letting webpack drift to another port.
+- This repo has **no git remote**. History was re-initialized so it's detached from the
+  starter. Add your own `origin` when you create the GitHub repo.

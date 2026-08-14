@@ -1,5 +1,6 @@
 .cache
 node_modules
+shots
 dist
 zipped
 .DS_Store
