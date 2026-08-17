@@ -3,6 +3,25 @@
 Game jam entry. Hard constraint: **the zipped build must be ≤ 13312 bytes.** Check with
 `npm run party` before assuming anything fits.
 
+## The game: ECHO
+
+Call-and-response rhythm game. The herd plays a phrase on the beat; the player plays it
+back. Five unicorns, one pentatonic note each (C D E G A) — so any tap order sounds
+musical, which matters because players fail constantly in a memory game.
+
+Load-bearing decisions, so they don't get undone by accident:
+
+- **The row never moves.** Recall is positional ("third from the left"), so each note
+  spawns a flying *copy* that arcs, bounces, and falls through the floor. Originals stay put.
+- **Everything is scheduled against `AudioContext.currentTime`** with a ~120ms lookahead.
+  `setTimeout` drifts and drift is fatal here. Visuals chase the audio clock, never the reverse.
+- **`flourish` (0..1) drives all spectacle** — arc height, ribbon width, spark count, sky
+  brightness. It updates per judged note, not at end of round, so escalation is felt live.
+- Pitch belongs to the unicorn, not to tap height. Recall is one axis: which, and when.
+  Tap-height-sets-pitch was built and deliberately parked — see the planning notes.
+
+Design notes live **outside this repo** in `../js13k2026-plan/`.
+
 ## Layout
 
 - `src/index.ts` — game code (entry point)
