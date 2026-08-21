@@ -3,7 +3,7 @@
 Game jam entry. Hard constraint: **the zipped build must be ≤ 13312 bytes.** Check with
 `npm run party` before assuming anything fits.
 
-## The game: ECHO
+## The game: UNICORN STORM
 
 Call-and-response rhythm game. The herd plays a phrase on the beat; the player plays it
 back. Five unicorns, one pentatonic note each (C D E G A) — so any tap order sounds

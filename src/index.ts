@@ -1,4 +1,4 @@
-// ECHO -- a call-and-response rhythm game.
+// UNICORN STORM -- a call-and-response rhythm game.
 //
 // The herd plays a phrase on the beat; you play it back. Getting it right makes
 // everything bigger: taller arcs, fatter ribbons, louder fireworks.
@@ -22,8 +22,11 @@ const BOUNCE = 0.96;
 const BPM = 80;
 const BEAT = 60 / BPM;
 const WINDOW = 0.36; // how far off the beat still counts, in seconds
-const REST = 4; // beats between the call and your turn -- a full bar, counted down
-const LEADIN = 4; // beats of countdown before the herd starts playing
+// Ceremony is expensive. A 2-note phrase takes ~1.5s to play, so multi-bar
+// countdowns around it meant waiting far longer than playing.
+const REST = 2; // beats between the call and your turn
+const LEADIN = 4; // opening countdown -- only for the first round of a run
+const LEADIN_NEXT = 2; // after that, tapping "add a note" already said "ready"
 
 const canvas: HTMLCanvasElement = document.createElement("canvas");
 const ctx: CanvasRenderingContext2D = canvas.getContext("2d");
@@ -102,6 +105,19 @@ function say(x: number, y: number, s: string, col: string, size: number) {
   labels.push({ x, y, s, col, age: 0, size });
 }
 
+// Hit rects for the two on-screen controls. Kept as state so drawing and hit
+// testing can never disagree about where a button is.
+const playBtn = { x: 0, y: 0, w: 0, h: 0 };
+const restartBtn = { x: 0, y: 0, w: 0, h: 0 };
+const againBtn = { x: 0, y: 0, w: 0, h: 0 };
+const nextBtn = { x: 0, y: 0, w: 0, h: 0 };
+const shareBtn = { x: 0, y: 0, w: 0, h: 0 };
+let restartArm = -1; // restart asks for confirmation; this is when that offer expires
+
+function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
+  return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
 function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   W = innerWidth;
@@ -114,6 +130,32 @@ function resize() {
   groundY = H * 0.82;
   slot = W / (COUNT + 1);
   for (let i = 0; i < herd.length; i++) herd[i].homeX = slot * (i + 1);
+
+  playBtn.w = Math.min(260, W * 0.62);
+  playBtn.h = 62;
+  playBtn.x = (W - playBtn.w) / 2;
+  playBtn.y = H * 0.4;
+
+  // Top-left, well clear of the herd: a stray gameplay tap must never restart a run.
+  restartBtn.w = 92;
+  restartBtn.h = 34;
+  restartBtn.x = 12;
+  restartBtn.y = 12;
+
+  shareBtn.w = 82;
+  shareBtn.h = 34;
+  shareBtn.x = W - 94;
+  shareBtn.y = 12;
+
+  // End-of-round choice, side by side and equally reachable.
+  const gw = Math.min(168, (W - 56) / 2);
+  const gh = 56;
+  const gy = H * 0.2 + 76;
+  againBtn.w = nextBtn.w = gw;
+  againBtn.h = nextBtn.h = gh;
+  againBtn.y = nextBtn.y = gy;
+  againBtn.x = W / 2 - gw - 8;
+  nextBtn.x = W / 2 + 8;
 }
 addEventListener("resize", resize);
 
@@ -181,7 +223,28 @@ let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
 let seq: number[] = [];
 let round = 0;
-let best = 0;
+let best = 0; // longest phrase reached
+let bestScore = 0;
+let bestClean = 0; // longest phrase reached without a single retry
+let streak = 0; // rounds advanced in a row without retrying
+let mult = 1;
+let retries = 0;
+
+// Persisted across visits. Wrapped: Safari private mode throws on access.
+function loadBest() {
+  try {
+    best = +localStorage.us_l || 0;
+    bestScore = +localStorage.us_s || 0;
+    bestClean = +localStorage.us_c || 0;
+  } catch (e) {}
+}
+function saveBest() {
+  try {
+    localStorage.us_l = best;
+    localStorage.us_s = bestScore;
+    localStorage.us_c = bestClean;
+  } catch (e) {}
+}
 
 let schedIdx = 0; // notes handed to the audio clock
 let visIdx = 0; // notes animated
@@ -208,16 +271,28 @@ let pulseAt = 0; // what the metronome and ground flash are anchored to
 // round is a memory test with no memory in it -- the whole gentleness of Simon comes
 // from the phrase you already know staying put, with one new note on the end.
 function newRound(now: number, grow: boolean) {
+  // Retrying is always allowed, but it costs the streak. That's the whole answer to
+  // "how do we tell a clean run from a farmed one" -- no bans, just a price.
+  if (!grow) {
+    streak = 0;
+    retries++;
+  } else if (round > 0) {
+    streak++;
+  }
+  mult = Math.min(5, 1 + streak * 0.5);
+
   if (!seq.length) seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
   else if (grow) seq.push((Math.random() * COUNT) | 0);
 
   judged = seq.map(() => -1);
   schedIdx = visIdx = 0;
-  clickIdx = -LEADIN; // click through the countdown so the tempo is set before note 1
+  clickIdx = round === 0 ? -LEADIN : -LEADIN_NEXT; // click through the countdown to set tempo
   cued = false;
   combo = 0;
+  pending.length = 0;
   phase = CALL;
-  phaseAt = now + BEAT * LEADIN;
+  const lead = round === 0 ? LEADIN : LEADIN_NEXT;
+  phaseAt = now + BEAT * lead;
   pulseAt = phaseAt;
   turnAt = -1;
   flourish = accuracy; // the herd shows off in proportion to how you last did
@@ -235,6 +310,45 @@ function heat() {
   for (const j of judged) if (j >= 0) (sum += j), n++;
   if (!n) return 0;
   return (sum / n) * (0.3 + 0.7 * (n / seq.length));
+}
+
+// Leaps queued for the future -- lets a celebration play out as a phrase rather
+// than everything firing on one frame.
+const pending: { at: number; i: number; power: number }[] = [];
+
+// The verdict, performed. How hard the herd parties and how bright the chord is
+// both scale with the score: a scrape through should not look like a triumph.
+function celebrate(a: number, now: number) {
+  const t = now + 0.05;
+
+  if (a > 0.98) {
+    // Everyone, ascending, with fireworks over the top.
+    const climb = [261.63, 329.63, 392.0, 523.25, 659.25];
+    for (let i = 0; i < 5; i++) {
+      note(climb[i], "triangle", t + i * 0.11, 0.24);
+      pending.push({ at: t + i * 0.11, i, power: 1 });
+    }
+    note(523.25, "sine", t + 0.62, 0.2);
+    note(659.25, "sine", t + 0.62, 0.18);
+    note(783.99, "sine", t + 0.62, 0.16);
+    for (let i = 0; i < COUNT; i++) {
+      burst(slot * (i + 1), groundY - H * 0.34 * Math.random() - 70, HUES[i], HUES[(i + 2) % COUNT], 1);
+    }
+  } else if (a >= 0.8) {
+    const climb = [261.63, 329.63, 392.0];
+    for (let i = 0; i < 3; i++) {
+      note(climb[i], "triangle", t + i * 0.12, 0.2);
+      pending.push({ at: t + i * 0.12, i: (i * 2) % COUNT, power: 0.8 });
+    }
+  } else if (a >= 0.5) {
+    note(261.63, "sine", t, 0.16);
+    note(392.0, "sine", t + 0.14, 0.16);
+    pending.push({ at: t, i: 2, power: 0.45 });
+  } else {
+    // Falling minor third, quiet. Disappointment, not a buzzer.
+    note(196.0, "sine", t, 0.13);
+    note(155.56, "sine", t + 0.16, 0.12);
+  }
 }
 
 function respondStart() {
@@ -296,21 +410,69 @@ function burst(x: number, y: number, h1: number, h2: number, power: number) {
 
 // --- input ---------------------------------------------------------------
 
-function tap(i: number) {
-  if (!ac) {
-    ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-    newRound(ac.currentTime, true);
-    return;
-  }
-  if (ac.state === "suspended") ac.resume();
-  const now = ac.currentTime;
+let unlocked = false;
 
-  if (phase === GRADE) {
-    // Wait for the player between rounds. The half-second guard stops the final
-    // note of a phrase from advancing the round it just finished.
-    if (now > phaseAt + 0.5) newRound(now, grew);
-    return;
+function ensureAudio() {
+  if (!ac) ac = new (window.AudioContext || (window as any).webkitAudioContext)();
+  if (ac.state === "suspended") ac.resume();
+  if (!unlocked) {
+    unlocked = true;
+    // Silent blip. Some mobile browsers leave the clock parked until a node has
+    // actually run, and every timing decision in this game reads that clock.
+    const g = ac.createGain();
+    g.gain.value = 0;
+    g.connect(ac.destination);
+    const o = ac.createOscillator();
+    o.connect(g);
+    o.start();
+    o.stop(ac.currentTime + 0.05);
   }
+}
+
+// Sound a unicorn without any of the grading machinery -- what the title screen
+// offers so the instrument can be learned before it's tested.
+function freePlay(i: number) {
+  ensureAudio();
+  note(NOTES[i], herd[i].voice, ac.currentTime, 0.2);
+  leap(i, 0.35);
+}
+
+function startRun() {
+  ensureAudio();
+
+  const go = () => {
+    seq = [];
+    score = 0;
+    accuracy = 0;
+    flourish = 0;
+    round = 0;
+    restartArm = -1;
+    streak = 0;
+    mult = 1;
+    retries = 0;
+    newRound(ac.currentTime, true);
+  };
+
+  // On iOS a new AudioContext is suspended and currentTime does NOT advance until it
+  // is running. Anchoring the round to a parked clock froze the countdown mid-"3" and
+  // needed a second tap to shake loose. Wait for the clock to actually tick.
+  if (ac.state === "running") {
+    go();
+  } else {
+    let started = false;
+    const once = () => {
+      if (started) return;
+      started = true;
+      go();
+    };
+    ac.resume().then(once, once);
+    setTimeout(once, 400); // never hang if resume() refuses to settle
+  }
+}
+
+function tap(i: number) {
+  ensureAudio();
+  const now = ac.currentTime;
 
   if (phase !== RESPOND) {
     // Free play outside your turn -- noodling should always be allowed.
@@ -334,7 +496,7 @@ function tap(i: number) {
     const ok = seq[0] === i;
     judged[0] = ok ? 1 : 0;
     if (ok) {
-      score += 100;
+      score += Math.round(100 * mult);
       say(lx, ly, "go!", "rgba(160,255,190,1)", 24);
     } else {
       say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
@@ -363,12 +525,12 @@ function tap(i: number) {
     say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
   } else if (timing > 0.82) {
     say(lx, ly, "PERFECT", "rgba(160,255,190,1)", 24);
-    score += 100;
+    score += Math.round(100 * mult);
   } else {
     const word = delta < 0 ? "early" : "late";
     const col = timing > 0.5 ? "rgba(255,235,150,.95)" : "rgba(255,190,120,.95)";
     say(lx, ly, `${word} ${(off * 1000) | 0}ms`, col, 17);
-    score += (timing * 100) | 0;
+    score += Math.round(timing * 100 * mult);
   }
 
   flourish = heat();
@@ -376,19 +538,97 @@ function tap(i: number) {
   leap(i, right ? 0.35 + flourish : 0.2, right && timing > 0.3);
 }
 
+function column(x: number) {
+  return Math.min(COUNT - 1, Math.max(0, Math.round(x / slot) - 1));
+}
+
+// Two taps to restart. Losing a long run to a misplaced thumb would be far worse
+// than the small friction of confirming.
+function shareRun() {
+  const clean = retries === 0 ? " with no retries" : ` (${retries} retries)`;
+  const msg = `UNICORN STORM: I echoed a ${seq.length}-note phrase for ${score} points${clean}.`;
+  const ok = () => say(W / 2, H * 0.44, "copied!", "rgba(180,255,210,1)", 22);
+  try {
+    const nav = navigator as any;
+    if (nav.share) nav.share({ title: "Unicorn Storm", text: msg }).catch(() => {});
+    else if (nav.clipboard) nav.clipboard.writeText(msg).then(ok, () => {});
+    else ok();
+  } catch (e) {}
+}
+
+function pokeRestart() {
+  const now = ac ? ac.currentTime : 0;
+  if (restartArm > 0 && now < restartArm) startRun();
+  else restartArm = now + 2.5;
+}
+
 canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   e.preventDefault();
-  tap(Math.min(COUNT - 1, Math.max(0, Math.round(e.clientX / slot) - 1)));
+  const x = e.clientX;
+  const y = e.clientY;
+
+  // If the clock is parked (iOS suspends it on app switch or lock), the first tap
+  // does nothing but wake it. Without this the overlay was a label with no behaviour.
+  if (ac && ac.state !== "running") {
+    ensureAudio();
+    return;
+  }
+
+  if (phase === TITLE) {
+    if (inRect(x, y, playBtn)) startRun();
+    else freePlay(column(x));
+    return;
+  }
+
+  if (inRect(x, y, restartBtn)) {
+    pokeRestart();
+    return;
+  }
+  if (inRect(x, y, shareBtn)) {
+    shareRun();
+    return;
+  }
+  restartArm = -1; // any tap elsewhere withdraws the offer
+
+  if (phase === GRADE) {
+    // Guard against the last note of a phrase bleeding into the choice screen.
+    const now = ac.currentTime;
+    if (now < phaseAt + 0.4) return;
+    if (inRect(x, y, againBtn)) newRound(now, false);
+    else if (grew && inRect(x, y, nextBtn)) newRound(now, true);
+    return;
+  }
+
+  tap(column(x));
 });
 
 addEventListener("keydown", (e: KeyboardEvent) => {
   const i = "12345".indexOf(e.key);
+  if (phase === TITLE) {
+    if (i >= 0) freePlay(i);
+    else if (e.key === " " || e.key === "Enter") startRun();
+    return;
+  }
+  if (phase === GRADE) {
+    const now = ac.currentTime;
+    if (now < phaseAt + 0.4) return;
+    if (e.key === "Enter" || e.key === " ") newRound(now, grew);
+    else if (e.key.toLowerCase() === "a") newRound(now, false);
+    else if (e.key.toLowerCase() === "r") pokeRestart();
+    return;
+  }
   if (i >= 0) tap(i);
+  else if (e.key.toLowerCase() === "r") pokeRestart();
 });
 
 // --- phase machine -------------------------------------------------------
 
 function update(now: number) {
+  while (pending.length && pending[0].at <= now) {
+    const q = pending.shift();
+    leap(q.i, q.power);
+  }
+
   if (phase === CALL) {
     // Audio runs ahead of the picture: schedule notes up to 120ms early so they
     // land exactly on the beat, and let the visuals catch up in their own frame.
@@ -433,18 +673,23 @@ function update(now: number) {
       phase = GRADE;
       phaseAt = now;
 
+      celebrate(accuracy, now);
+      flourish = accuracy; // let the sky settle to match the verdict
+
       if (accuracy > 0.98) {
         message = "PERFECT";
-        for (let i = 0; i < COUNT; i++) {
-          burst(slot * (i + 1), groundY - H * 0.3 * Math.random() - 60, HUES[i], HUES[(i + 2) % COUNT], 1);
-        }
       } else if (accuracy >= 0.5) {
         message = PASS[round % PASS.length];
       } else {
         message = FAIL[round % FAIL.length];
       }
-      grew = accuracy >= 0.5;
-      if (grew && seq.length > best) best = seq.length;
+      grew = accuracy >= 0.5; // below half, the phrase must be repeated
+      if (grew) {
+        if (seq.length > best) best = seq.length;
+        if (!retries && seq.length > bestClean) bestClean = seq.length;
+      }
+      if (score > bestScore) bestScore = score;
+      saveBest();
     }
   }
 
@@ -538,6 +783,64 @@ function countdown(label: string, beatsLeft: number) {
   ctx.stroke();
 }
 
+// Scales text down until it fits the width given. A fixed size that suits a tablet
+// runs off the edge of a phone.
+function fitText(s: string, x: number, y: number, maxW: number, cap: number, alpha: number) {
+  ctx.font = `800 100px system-ui,-apple-system,sans-serif`;
+  const size = Math.min(cap, (maxW / ctx.measureText(s).width) * 100);
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  ctx.font = `800 ${size}px system-ui,-apple-system,sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText(s, x, y);
+  return size;
+}
+
+// A labelled button with a quiet second line. Primary gets the brighter treatment.
+function choice(
+  r: { x: number; y: number; w: number; h: number },
+  label: string,
+  sub: string,
+  primary: boolean,
+  locked?: boolean
+) {
+  rrect(r.x, r.y, r.w, r.h, 28);
+  ctx.fillStyle = primary ? "rgba(255,255,255,.13)" : "rgba(255,255,255,.04)";
+  ctx.fill();
+  ctx.strokeStyle = locked
+    ? "rgba(255,255,255,.1)"
+    : primary
+    ? "rgba(255,255,255,.75)"
+    : "rgba(255,255,255,.22)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const a = locked ? 0.25 : primary ? 0.97 : 0.6;
+  const size = Math.min(17, r.w / 8.6);
+  text(label, r.x + r.w / 2, r.y + 25, size, a);
+  text(sub, r.x + r.w / 2, r.y + 43, Math.min(12, r.w / 13), locked ? 0.3 : primary ? 0.5 : 0.35);
+}
+
+function rrect(x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// Shared by the dot row and the compact bar so the two can never disagree.
+function slotColor(i: number, cursor: number) {
+  if (phase === CALL) return i < visIdx ? `hsl(${HUES[seq[i]]},80%,66%)` : "rgba(255,255,255,.16)";
+  if (judged[i] >= 0)
+    return judged[i] > 0.55
+      ? "rgba(150,255,180,.95)"
+      : judged[i] > 0
+      ? "rgba(255,225,120,.9)"
+      : "rgba(255,110,120,.85)";
+  return i === cursor ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.16)";
+}
+
 function text(s: string, x: number, y: number, size: number, alpha: number) {
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
   ctx.font = `600 ${size}px system-ui,-apple-system,sans-serif`;
@@ -610,10 +913,11 @@ function frame(nowMs: number) {
       const bonus = a.hot && b.hot;
       burst(mx, my, a.hue, b.hue, bonus ? 1 : 0.3 + flourish);
       if (bonus) {
-        score += 250;
+        const pts = Math.round(250 * mult);
+        score += pts;
         combo++;
         a.hot = b.hot = false; // one payout per pair
-        say(mx, my - 20, "+250", "rgba(255,240,160,1)", 26);
+        say(mx, my - 20, `+${pts}`, "rgba(255,240,160,1)", 26);
       }
     }
   }
@@ -701,35 +1005,73 @@ function frame(nowMs: number) {
 
   // --- hud ---
   if (phase === TITLE) {
-    text("ECHO", W / 2, H * 0.32, Math.min(74, W / 7), 0.95);
-    text("the herd plays a phrase. play it back.", W / 2, H * 0.32 + 44, Math.min(19, W / 26), 0.6);
-    // The game is unplayable silent, and on iOS the ringer switch mutes WebAudio
-    // with no other symptom -- worth saying plainly before anyone starts.
-    text("TURN YOUR SOUND ON", W / 2, H * 0.32 + 92, Math.min(22, W / 22), 0.9);
-    text("(on iPad, check the silent switch)", W / 2, H * 0.32 + 118, Math.min(15, W / 34), 0.45);
-    text("tap or click anywhere to play", W / 2, H * 0.32 + 162, Math.min(19, W / 28), 0.6);
+    fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
+    text("the herd plays a phrase. play it back.", W / 2, H * 0.24 + 42, Math.min(19, W / 26), 0.55);
+
+    // One obvious target. It breathes so it reads as the live thing on screen.
+    const glowB = 0.5 + 0.5 * Math.sin(nowMs / 520);
+    rrect(playBtn.x, playBtn.y, playBtn.w, playBtn.h, 31);
+    ctx.fillStyle = `rgba(255,255,255,${0.07 + glowB * 0.05})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,255,255,${0.4 + glowB * 0.35})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text("PLAY", W / 2, playBtn.y + 41, 27, 0.95);
+
+    // The herd is live here: hearing the five voices before being graded on them
+    // is the cheapest tutorial there is.
+    if (best) {
+      text(
+        `best ${best} notes  ·  ${bestScore} pts`,
+        W / 2,
+        playBtn.y + playBtn.h + 34,
+        Math.min(16, W / 33),
+        0.5
+      );
+      if (bestClean)
+        text(
+          `${bestClean} notes with no retries`,
+          W / 2,
+          playBtn.y + playBtn.h + 56,
+          Math.min(14, W / 38),
+          0.35
+        );
+    }
+
+    text("or tap a unicorn to hear its voice", W / 2, groundY - 74, Math.min(17, W / 31), 0.45);
+
+    // Demoted to small print. As a shout it out-competed the actual call to action.
+    text("best with sound on — on iPad check the silent switch", W / 2, H - 20, Math.min(14, W / 38), 0.35);
     return;
   }
 
   // Sequence dots: one per note, so you can see how long the phrase is and,
   // during your turn, which beat you're on.
+  const n = seq.length;
   const dotY = 42;
-  const spread = Math.min(34, W / (seq.length + 3));
-  const x0 = W / 2 - ((seq.length - 1) * spread) / 2;
   const cursor = phase === RESPOND ? (turnAt < 0 ? 0 : Math.round((now - turnAt) / BEAT)) : -1;
-  for (let i = 0; i < seq.length; i++) {
-    const x = x0 + i * spread;
-    ctx.beginPath();
-    ctx.arc(x, dotY, i === cursor ? 8 : 5.5, 0, 6.284);
-    if (phase === CALL) {
-      ctx.fillStyle = i < visIdx ? `hsl(${HUES[seq[i]]},80%,66%)` : "rgba(255,255,255,.16)";
-    } else if (judged[i] >= 0) {
-      ctx.fillStyle =
-        judged[i] > 0.55 ? "rgba(150,255,180,.95)" : judged[i] > 0 ? "rgba(255,225,120,.9)" : "rgba(255,110,120,.85)";
-    } else {
-      ctx.fillStyle = i === cursor ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.16)";
+
+  if (n <= 16) {
+    const spread = Math.min(34, W / (n + 3));
+    const r = Math.min(5.5, spread * 0.24);
+    const x0 = W / 2 - ((n - 1) * spread) / 2;
+    for (let i = 0; i < n; i++) {
+      ctx.beginPath();
+      ctx.arc(x0 + i * spread, dotY, i === cursor ? r + 2.5 : r, 0, 6.284);
+      ctx.fillStyle = slotColor(i, cursor);
+      ctx.fill();
     }
-    ctx.fill();
+  } else {
+    // Past ~16 the dots are too small to count, so switch to a segmented bar plus a
+    // "7 / 24" readout: you stop counting pips and start reading a position.
+    const bw = Math.min(W - 76, 470);
+    const bx = (W - bw) / 2;
+    const seg = bw / n;
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = slotColor(i, cursor);
+      ctx.fillRect(bx + i * seg, dotY - (i === cursor ? 9 : 5), Math.max(1.5, seg - 1.2), i === cursor ? 18 : 10);
+    }
+    text(`${Math.min(Math.max(cursor + 1, 1), n)} / ${n}`, W / 2, dotY + 26, 12, 0.45);
   }
 
   // Floating judgements
@@ -777,25 +1119,59 @@ function frame(nowMs: number) {
     const big = message === "PERFECT";
     text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
     if (!big) text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
-    if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 58, 15, 0.5);
-    // Pulse the prompt so it reads as waiting on you, not as a stuck screen.
-    const breathe = 0.55 + 0.35 * Math.sin(nowMs / 320);
-    text(
-      grew ? "tap to add a note" : "tap to hear it again",
-      W / 2,
-      H * 0.2 + (combo ? 96 : 78),
-      19,
-      breathe
-    );
+    if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
+
+    // Two real options. Whichever suits the result is highlighted, but both are
+    // always available -- replaying a phrase you nailed is a legitimate choice,
+    // and so is pressing on after a scrappy one.
+    choice(againBtn, "HEAR IT AGAIN", "same phrase", !grew);
+    if (grew) choice(nextBtn, "NEXT", "one note longer", true);
+    else choice(nextBtn, "NEXT", "needs 50%", false, true);
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
     text("sound on?", W / 2, H - 44, 15, 0.4);
   }
 
-  text(`${score}`, W / 2, 82, 22, 0.7);
-  text(`${seq.length} notes   best ${best}`, W / 2, H - 18, 14, 0.35);
+  {
+    const armed = restartArm > 0 && now < restartArm;
+    rrect(restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, 17);
+    ctx.fillStyle = armed ? "rgba(255,140,140,.22)" : "rgba(255,255,255,.05)";
+    ctx.fill();
+    ctx.strokeStyle = armed ? "rgba(255,150,150,.7)" : "rgba(255,255,255,.18)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    text(
+      armed ? "sure?" : "restart",
+      restartBtn.x + restartBtn.w / 2,
+      restartBtn.y + 22,
+      14,
+      armed ? 0.95 : 0.5
+    );
+
+    rrect(shareBtn.x, shareBtn.y, shareBtn.w, shareBtn.h, 17);
+    ctx.fillStyle = "rgba(255,255,255,.05)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.18)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    text("share", shareBtn.x + shareBtn.w / 2, shareBtn.y + 22, 14, 0.5);
+  }
+
+  if (ac.state !== "running") {
+    text("paused — tap to resume", W / 2, H * 0.5, 20, 0.75);
+  }
+
+  text(`${score}`, W / 2, 98, 22, 0.7);
+  text(
+    `${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
+    W / 2,
+    H - 18,
+    14,
+    0.35
+  );
 }
 
+loadBest();
 resize();
 requestAnimationFrame(frame);
