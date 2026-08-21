@@ -88,6 +88,14 @@ interface Spark {
 const sparks: Spark[] = [];
 const flashes: { x: number; y: number; age: number; r: number }[] = [];
 
+// Big banded arcs behind everything. Reserved for high scores so they stay an event.
+const bows: { x: number; y: number; r: number; age: number; life: number }[] = [];
+const BANDS = [0, 28, 52, 120, 200, 250, 288];
+
+function rainbow(x: number, y: number, r: number, life: number) {
+  bows.push({ x, y, r, age: 0, life });
+}
+
 // Floating judgement text. Without this the player has no idea whether they were
 // close or wildly off -- and a rhythm game you can't read is a rhythm game you
 // can't improve at.
@@ -290,6 +298,7 @@ function newRound(now: number, grow: boolean) {
   cued = false;
   combo = 0;
   pending.length = 0;
+  bows.length = 0;
   phase = CALL;
   const lead = round === 0 ? LEADIN : LEADIN_NEXT;
   phaseAt = now + BEAT * lead;
@@ -314,25 +323,55 @@ function heat() {
 
 // Leaps queued for the future -- lets a celebration play out as a phrase rather
 // than everything firing on one frame.
-const pending: { at: number; i: number; power: number }[] = [];
+const pending: { at: number; i: number; power: number; x?: number; hue?: number }[] = [];
 
 // The verdict, performed. How hard the herd parties and how bright the chord is
 // both scale with the score: a scrape through should not look like a triumph.
 function celebrate(a: number, now: number) {
   const t = now + 0.05;
+  const climb = [261.63, 329.63, 392.0, 523.25, 659.25];
 
-  if (a > 0.98) {
-    // Everyone, ascending, with fireworks over the top.
-    const climb = [261.63, 329.63, 392.0, 523.25, 659.25];
+  if (a >= 0.95) {
+    // The storm. Rainbows, fireworks, and unicorns erupting the length of the field.
+    for (let i = 0; i < 3; i++) rainbow(W * (0.18 + 0.32 * i), groundY, W * (0.3 + 0.11 * i), 2.8);
+
     for (let i = 0; i < 5; i++) {
-      note(climb[i], "triangle", t + i * 0.11, 0.24);
-      pending.push({ at: t + i * 0.11, i, power: 1 });
+      note(climb[i], "triangle", t + i * 0.1, 0.24);
+      pending.push({ at: t + i * 0.1, i, power: 1 });
     }
-    note(523.25, "sine", t + 0.62, 0.2);
-    note(659.25, "sine", t + 0.62, 0.18);
-    note(783.99, "sine", t + 0.62, 0.16);
+    note(523.25, "sine", t + 0.58, 0.2);
+    note(659.25, "sine", t + 0.58, 0.18);
+    note(783.99, "sine", t + 0.58, 0.16);
+
+    // A crowd from nowhere -- not the five in the row, but new arrivals all over.
+    for (let k = 0; k < 16; k++) {
+      pending.push({
+        at: t + 0.12 + k * 0.055,
+        i: 0,
+        power: 0.55 + Math.random() * 0.55,
+        x: 40 + Math.random() * (W - 80),
+        hue: HUES[(Math.random() * COUNT) | 0],
+      });
+    }
+
     for (let i = 0; i < COUNT; i++) {
       burst(slot * (i + 1), groundY - H * 0.34 * Math.random() - 70, HUES[i], HUES[(i + 2) % COUNT], 1);
+    }
+  } else if (a >= 0.9) {
+    // Rainbows, but calm ones -- the tier above has somewhere left to go.
+    for (let i = 0; i < 2; i++) rainbow(W * (0.32 + 0.36 * i), groundY, W * (0.28 + 0.1 * i), 2.4);
+    for (let i = 0; i < 4; i++) {
+      note(climb[i], "triangle", t + i * 0.11, 0.22);
+      pending.push({ at: t + i * 0.11, i, power: 0.9 });
+    }
+    for (let k = 0; k < 5; k++) {
+      pending.push({
+        at: t + 0.18 + k * 0.09,
+        i: 0,
+        power: 0.5 + Math.random() * 0.4,
+        x: 40 + Math.random() * (W - 80),
+        hue: HUES[(Math.random() * COUNT) | 0],
+      });
     }
   } else if (a >= 0.8) {
     const climb = [261.63, 329.63, 392.0];
@@ -357,31 +396,33 @@ function respondStart() {
 
 // --- leaping -------------------------------------------------------------
 
-function leap(i: number, power: number, hot?: boolean) {
-  const u = herd[i];
-
-  // Exaggeration is the reward: arcs swell with `power`, which tracks how well
-  // the player is doing right now.
+// Exaggeration is the reward: arcs swell with `power`, which tracks how well the
+// player is doing right now.
+function launch(x: number, hue: number, power: number, dir: number, hot?: boolean) {
   const peak = H * (0.2 + power * 0.34);
   const vy = Math.sqrt(2 * G * peak);
   const flight = (2 * vy) / G;
-
-  let dir = i % 2 ? -1 : 1;
   const reach = peak * 1.7;
-  if (u.homeX + dir * reach < 40 || u.homeX + dir * reach > W - 40) dir = -dir;
+  if (x + dir * reach < 40 || x + dir * reach > W - 40) dir = -dir;
 
-  const ribbon = { hue: u.hue, pts: [], age: 0, fat: 0.6 + power };
+  const ribbon = { hue, pts: [], age: 0, fat: 0.6 + power };
   ribbons.push(ribbon);
   flyers.push({
-    x: u.homeX,
+    x,
     y: groundY - 6,
     vx: (dir * reach) / flight,
     vy: -vy,
-    hue: u.hue,
+    hue,
     glow: 0.3 + power * 0.7,
     hot: !!hot,
     ribbon,
   });
+}
+
+function leap(i: number, power: number, hot?: boolean) {
+  const u = herd[i];
+  // Alternate by index so neighbours sweep opposite ways and their arcs can meet.
+  launch(u.homeX, u.hue, power, i % 2 ? -1 : 1, hot);
   u.lit = 1;
 }
 
@@ -626,7 +667,8 @@ addEventListener("keydown", (e: KeyboardEvent) => {
 function update(now: number) {
   while (pending.length && pending[0].at <= now) {
     const q = pending.shift();
-    leap(q.i, q.power);
+    if (q.x === undefined) leap(q.i, q.power);
+    else launch(q.x, q.hue, q.power, Math.random() < 0.5 ? -1 : 1);
   }
 
   if (phase === CALL) {
@@ -864,6 +906,25 @@ function frame(nowMs: number) {
   sky.addColorStop(1, `hsl(275,42%,${19 + lift * 12}%)`);
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, H);
+
+  // Rainbows sit behind the whole scene: sky first, arcs, then everything else.
+  for (let i = bows.length - 1; i >= 0; i--) {
+    const b = bows[i];
+    b.age += dt;
+    if (b.age > b.life) {
+      bows.splice(i, 1);
+      continue;
+    }
+    const a = Math.sin((b.age / b.life) * 3.1416) * 0.3; // fade in and back out
+    const bandW = b.r * 0.055;
+    ctx.lineWidth = bandW;
+    for (let k = 0; k < 7; k++) {
+      ctx.strokeStyle = `hsla(${BANDS[k]},92%,62%,${a})`;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r - k * bandW, 3.1416, 6.2832);
+      ctx.stroke();
+    }
+  }
 
   // --- flyers ---
   for (let i = flyers.length - 1; i >= 0; i--) {
@@ -1117,6 +1178,13 @@ function frame(nowMs: number) {
     }
   } else {
     const big = message === "PERFECT";
+    // Scrim: at high scores the celebration is bright enough to swallow the UI.
+    const pw = Math.min(W - 32, 520);
+    const py = H * 0.2 - 42;
+    rrect((W - pw) / 2, py, pw, nextBtn.y + nextBtn.h + 18 - py, 26);
+    ctx.fillStyle = "rgba(12,9,28,.62)";
+    ctx.fill();
+
     text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
     if (!big) text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
     if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
