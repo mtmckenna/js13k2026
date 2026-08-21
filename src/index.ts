@@ -19,10 +19,11 @@ const HIT = 38 * SIZE;
 const G = 1500;
 const BOUNCE = 0.96;
 
-const BPM = 96;
+const BPM = 80;
 const BEAT = 60 / BPM;
-const WINDOW = 0.3; // how far off the beat still counts, in seconds
-const REST = 2; // beats of silence between the call and your turn
+const WINDOW = 0.36; // how far off the beat still counts, in seconds
+const REST = 4; // beats between the call and your turn -- a full bar, counted down
+const LEADIN = 4; // beats of countdown before the herd starts playing
 
 const canvas: HTMLCanvasElement = document.createElement("canvas");
 const ctx: CanvasRenderingContext2D = canvas.getContext("2d");
@@ -59,6 +60,7 @@ interface Flyer {
   vy: number;
   hue: number;
   glow: number;
+  hot: boolean; // launched by a correct note -- only these can score a collision bonus
   ribbon: Ribbon;
 }
 
@@ -82,6 +84,23 @@ interface Spark {
 }
 const sparks: Spark[] = [];
 const flashes: { x: number; y: number; age: number; r: number }[] = [];
+
+// Floating judgement text. Without this the player has no idea whether they were
+// close or wildly off -- and a rhythm game you can't read is a rhythm game you
+// can't improve at.
+interface Label {
+  x: number;
+  y: number;
+  s: string;
+  col: string;
+  age: number;
+  size: number;
+}
+const labels: Label[] = [];
+
+function say(x: number, y: number, s: string, col: string, size: number) {
+  labels.push({ x, y, s, col, age: 0, size });
+}
 
 function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -161,7 +180,6 @@ const GRADE = 3;
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
 let seq: number[] = [];
-let len = 3;
 let round = 0;
 let best = 0;
 
@@ -173,17 +191,50 @@ let judged: number[] = []; // per-slot score, -1 = not yet attempted
 let accuracy = 0; // last round
 let flourish = 0; // 0..1 -- drives how big everything gets
 let message = "";
+let score = 0;
+let grew = true; // did the last round earn a new note?
+const PASS = ["nice", "good ear", "well played", "the herd approves"];
+const FAIL = ["not quite", "so close", "almost had it"];
+let combo = 0; // midair crossings this round
+let cued = false; // "your turn" cue scheduled?
+let goAt = -9; // audio time the turn began, for the GO flourish
+// The response clock starts on the player's FIRST tap, not on a countdown. The
+// opening note is therefore a gimme: it can't be early or late, it just sets the
+// beat everything after it is measured against.
+let turnAt = -1; // -1 until they commit; then the origin of their phrase
+let pulseAt = 0; // what the metronome and ground flash are anchored to
 
-function newRound(now: number) {
-  seq = [];
-  for (let i = 0; i < len; i++) seq.push((Math.random() * COUNT) | 0);
+// Grow by APPENDING one note, never by regenerating. A fresh random phrase every
+// round is a memory test with no memory in it -- the whole gentleness of Simon comes
+// from the phrase you already know staying put, with one new note on the end.
+function newRound(now: number, grow: boolean) {
+  if (!seq.length) seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
+  else if (grow) seq.push((Math.random() * COUNT) | 0);
+
   judged = seq.map(() => -1);
-  schedIdx = visIdx = clickIdx = 0;
+  schedIdx = visIdx = 0;
+  clickIdx = -LEADIN; // click through the countdown so the tempo is set before note 1
+  cued = false;
+  combo = 0;
   phase = CALL;
-  phaseAt = now + BEAT * 1.5; // lead-in so the first note isn't a surprise
+  phaseAt = now + BEAT * LEADIN;
+  pulseAt = phaseAt;
+  turnAt = -1;
   flourish = accuracy; // the herd shows off in proportion to how you last did
   message = "";
   round++;
+}
+
+// How hard the game should be showing off right now. Accuracy alone maxes out on
+// the first correct note and leaves the spectacle nowhere to build, so weight it by
+// how deep into the phrase they are: "closer to getting it right" means both clean
+// AND nearly done.
+function heat() {
+  let sum = 0;
+  let n = 0;
+  for (const j of judged) if (j >= 0) (sum += j), n++;
+  if (!n) return 0;
+  return (sum / n) * (0.3 + 0.7 * (n / seq.length));
 }
 
 function respondStart() {
@@ -192,7 +243,7 @@ function respondStart() {
 
 // --- leaping -------------------------------------------------------------
 
-function leap(i: number, power: number) {
+function leap(i: number, power: number, hot?: boolean) {
   const u = herd[i];
 
   // Exaggeration is the reward: arcs swell with `power`, which tracks how well
@@ -214,6 +265,7 @@ function leap(i: number, power: number) {
     vy: -vy,
     hue: u.hue,
     glow: 0.3 + power * 0.7,
+    hot: !!hot,
     ribbon,
   });
   u.lit = 1;
@@ -247,11 +299,18 @@ function burst(x: number, y: number, h1: number, h2: number, power: number) {
 function tap(i: number) {
   if (!ac) {
     ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-    newRound(ac.currentTime);
+    newRound(ac.currentTime, true);
     return;
   }
   if (ac.state === "suspended") ac.resume();
   const now = ac.currentTime;
+
+  if (phase === GRADE) {
+    // Wait for the player between rounds. The half-second guard stops the final
+    // note of a phrase from advancing the round it just finished.
+    if (now > phaseAt + 0.5) newRound(now, grew);
+    return;
+  }
 
   if (phase !== RESPOND) {
     // Free play outside your turn -- noodling should always be allowed.
@@ -263,26 +322,58 @@ function tap(i: number) {
   note(NOTES[i], herd[i].voice, now, 0.22);
 
   // Which beat was this aimed at?
-  const k = Math.round((now - respondStart()) / BEAT);
-  if (k < 0 || k >= seq.length || judged[k] >= 0) {
-    leap(i, 0.3); // stray tap: it still leaps, just joylessly
-    flourish = Math.max(0, flourish - 0.15);
+  const lx = herd[i].homeX;
+  const ly = groundY - 60;
+
+  // First tap of the turn: anchor everything to it and re-phase the pulse so the
+  // metronome follows the player instead of arguing with them.
+  if (turnAt < 0) {
+    turnAt = now;
+    pulseAt = now;
+    clickIdx = 0;
+    const ok = seq[0] === i;
+    judged[0] = ok ? 1 : 0;
+    if (ok) {
+      score += 100;
+      say(lx, ly, "go!", "rgba(160,255,190,1)", 24);
+    } else {
+      say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
+    }
+    flourish = heat();
+    leap(i, ok ? 0.35 + flourish : 0.2, ok);
     return;
   }
 
-  const off = Math.abs(now - (respondStart() + k * BEAT));
+  const k = Math.round((now - turnAt) / BEAT);
+  if (k < 0 || k >= seq.length || judged[k] >= 0) {
+    leap(i, 0.3); // stray tap: it still leaps, just joylessly
+    flourish = Math.max(0, flourish - 0.15);
+    say(lx, ly, "extra", "rgba(255,255,255,.5)", 15);
+    return;
+  }
+
+  const delta = now - (turnAt + k * BEAT); // signed: <0 early, >0 late
+  const off = Math.abs(delta);
   const timing = Math.max(0, 1 - off / WINDOW);
   const right = seq[k] === i;
   judged[k] = right ? timing : 0;
 
-  // Running accuracy over what's been attempted so far -- this is what makes the
-  // display escalate as the player closes in on a perfect round.
-  let sum = 0;
-  let n = 0;
-  for (const j of judged) if (j >= 0) (sum += j), n++;
-  flourish = n ? sum / n : 0;
+  // Name the error, and say which way. "EARLY" is actionable; a red dot isn't.
+  if (!right) {
+    say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
+  } else if (timing > 0.82) {
+    say(lx, ly, "PERFECT", "rgba(160,255,190,1)", 24);
+    score += 100;
+  } else {
+    const word = delta < 0 ? "early" : "late";
+    const col = timing > 0.5 ? "rgba(255,235,150,.95)" : "rgba(255,190,120,.95)";
+    say(lx, ly, `${word} ${(off * 1000) | 0}ms`, col, 17);
+    score += (timing * 100) | 0;
+  }
 
-  leap(i, right ? 0.35 + flourish : 0.2);
+  flourish = heat();
+
+  leap(i, right ? 0.35 + flourish : 0.2, right && timing > 0.3);
 }
 
 canvas.addEventListener("pointerdown", (e: PointerEvent) => {
@@ -311,14 +402,33 @@ function update(now: number) {
       leap(seq[visIdx], 0.45 + flourish * 0.55);
       visIdx++;
     }
+
+    // A rising two-note pickup on the beat before your turn, scheduled on the audio
+    // clock like everything else. The handover was the thing that felt ambiguous.
+    if (!cued && now > respondStart() - BEAT * 1.6) {
+      cued = true;
+      note(NOTES[0] * 2, "sine", respondStart() - BEAT, 0.13);
+      note(NOTES[2] * 2, "sine", respondStart() - BEAT * 0.5, 0.15);
+    }
+
     if (now >= respondStart() - BEAT * 0.5) {
       phase = RESPOND;
       message = "";
+      goAt = now;
     }
   } else if (phase === RESPOND) {
-    if (now > respondStart() + (seq.length - 1) * BEAT + WINDOW) {
+    // If they never tapped, end the turn after a generous wait rather than hanging.
+    const endAt =
+      turnAt < 0
+        ? respondStart() + (seq.length + 4) * BEAT
+        : turnAt + (seq.length - 1) * BEAT + WINDOW;
+    if (now > endAt) {
       let sum = 0;
-      for (const j of judged) sum += Math.max(0, j);
+      for (let i = 0; i < seq.length; i++) {
+        sum += Math.max(0, judged[i]);
+        // Name the notes that never got played -- silence is the least readable failure.
+        if (judged[i] < 0) say(herd[seq[i]].homeX, groundY - 44, "missed", "rgba(255,110,120,.85)", 15);
+      }
       accuracy = sum / seq.length;
       phase = GRADE;
       phaseAt = now;
@@ -328,26 +438,20 @@ function update(now: number) {
         for (let i = 0; i < COUNT; i++) {
           burst(slot * (i + 1), groundY - H * 0.3 * Math.random() - 60, HUES[i], HUES[(i + 2) % COUNT], 1);
         }
-      } else if (accuracy >= 0.6) {
-        message = "NICE";
+      } else if (accuracy >= 0.5) {
+        message = PASS[round % PASS.length];
       } else {
-        message = "AGAIN";
+        message = FAIL[round % FAIL.length];
       }
-      if (accuracy >= 0.6) {
-        if (round > best) best = round;
-        len = Math.min(len + 1, 8);
-      } else {
-        len = Math.max(3, len - 1);
-      }
+      grew = accuracy >= 0.5;
+      if (grew && seq.length > best) best = seq.length;
     }
-  } else if (phase === GRADE) {
-    if (now > phaseAt + BEAT * 3) newRound(now);
   }
 
-  // Metronome runs through every phase so the pulse never drops.
-  if (phase !== TITLE) {
+  // Metronome runs through the call and the response, but not while waiting.
+  if (phase === CALL || phase === RESPOND) {
     for (;;) {
-      const at = phaseAt + clickIdx * BEAT;
+      const at = pulseAt + clickIdx * BEAT;
       if (at > now + 0.12) break;
       if (at >= ac.currentTime - 0.05) click(at, clickIdx % 4 === 0);
       clickIdx++;
@@ -363,10 +467,16 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.rotate(Math.atan2(vy, vx));
   ctx.scale(SIZE, vx < 0 ? -SIZE : SIZE);
 
+  // Soft halo rather than a flat translucent disc -- a hard-edged circle reads as
+  // a bubble around the unicorn instead of light coming off it.
   if (glow > 0.01) {
-    ctx.fillStyle = `hsla(${hue},100%,70%,${glow * 0.3})`;
+    const r = 20 + glow * 10;
+    const g = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+    g.addColorStop(0, `hsla(${hue},100%,75%,${glow * 0.42})`);
+    g.addColorStop(1, `hsla(${hue},100%,70%,0)`);
+    ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(0, 0, 24 + glow * 12, 0, 6.284);
+    ctx.arc(0, 0, r, 0, 6.284);
     ctx.fill();
   }
 
@@ -411,6 +521,21 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.arc(15, -11, 1.4, 0, 6.284);
   ctx.fill();
   ctx.restore();
+}
+
+// Big numeral plus a ring that closes over the beat, so the count is readable
+// whether you are watching the number or the motion.
+function countdown(label: string, beatsLeft: number) {
+  const n = Math.max(1, Math.ceil(beatsLeft));
+  const frac = 1 - (beatsLeft - Math.floor(beatsLeft)); // 0..1 through this beat
+  text(label, W / 2, H * 0.2, 20, 0.5);
+  text(`${n}`, W / 2, H * 0.2 + 76, 54, 0.85);
+  ctx.strokeStyle = `rgba(255,255,255,${0.5 - frac * 0.35})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  // Sits clear of the label -- at radius 44 centred higher, the ring cut the text.
+  ctx.arc(W / 2, H * 0.2 + 58, 42, -1.5708, -1.5708 + 6.284 * (1 - frac));
+  ctx.stroke();
 }
 
 function text(s: string, x: number, y: number, size: number, alpha: number) {
@@ -476,7 +601,20 @@ function frame(nowMs: number) {
       a.y -= ny * push;
       b.x += nx * push;
       b.y += ny * push;
-      burst((a.x + b.x) / 2, (a.y + b.y) / 2, a.hue, b.hue, 0.3 + flourish);
+
+      // Two well-played notes crossing midair is worth something. Accuracy already
+      // makes arcs bigger, so playing well produces more crossings on its own --
+      // the reward loop closes without asking the player to aim at anything.
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const bonus = a.hot && b.hot;
+      burst(mx, my, a.hue, b.hue, bonus ? 1 : 0.3 + flourish);
+      if (bonus) {
+        score += 250;
+        combo++;
+        a.hot = b.hot = false; // one payout per pair
+        say(mx, my - 20, "+250", "rgba(255,240,160,1)", 26);
+      }
     }
   }
 
@@ -539,8 +677,19 @@ function frame(nowMs: number) {
   }
   ctx.globalCompositeOperation = "source-over";
 
-  ctx.fillStyle = "rgba(255,255,255,.09)";
+  // Ground brightens on every beat -- a visible pulse to play against, so the
+  // rhythm isn't carried by the click alone.
+  let pulse = 0;
+  if (ac && (phase === CALL || phase === RESPOND)) {
+    const ph = ((now - pulseAt) / BEAT) % 1;
+    pulse = Math.max(0, 1 - (ph < 0 ? ph + 1 : ph) * 3);
+  }
+  ctx.fillStyle = `rgba(255,255,255,${0.09 + pulse * 0.1})`;
   ctx.fillRect(0, groundY + 16, W, H);
+  if (pulse > 0.02) {
+    ctx.fillStyle = `rgba(255,255,255,${pulse * 0.5})`;
+    ctx.fillRect(0, groundY + 16, W, 2);
+  }
 
   for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow);
 
@@ -552,9 +701,13 @@ function frame(nowMs: number) {
 
   // --- hud ---
   if (phase === TITLE) {
-    text("ECHO", W / 2, H * 0.36, Math.min(74, W / 7), 0.95);
-    text("the herd plays a phrase. play it back.", W / 2, H * 0.36 + 46, Math.min(19, W / 26), 0.6);
-    text("tap a unicorn to begin", W / 2, H * 0.36 + 78, Math.min(17, W / 30), 0.45);
+    text("ECHO", W / 2, H * 0.32, Math.min(74, W / 7), 0.95);
+    text("the herd plays a phrase. play it back.", W / 2, H * 0.32 + 44, Math.min(19, W / 26), 0.6);
+    // The game is unplayable silent, and on iOS the ringer switch mutes WebAudio
+    // with no other symptom -- worth saying plainly before anyone starts.
+    text("TURN YOUR SOUND ON", W / 2, H * 0.32 + 92, Math.min(22, W / 22), 0.9);
+    text("(on iPad, check the silent switch)", W / 2, H * 0.32 + 118, Math.min(15, W / 34), 0.45);
+    text("tap or click anywhere to play", W / 2, H * 0.32 + 162, Math.min(19, W / 28), 0.6);
     return;
   }
 
@@ -563,7 +716,7 @@ function frame(nowMs: number) {
   const dotY = 42;
   const spread = Math.min(34, W / (seq.length + 3));
   const x0 = W / 2 - ((seq.length - 1) * spread) / 2;
-  const cursor = phase === RESPOND ? Math.round((now - respondStart()) / BEAT) : -1;
+  const cursor = phase === RESPOND ? (turnAt < 0 ? 0 : Math.round((now - turnAt) / BEAT)) : -1;
   for (let i = 0; i < seq.length; i++) {
     const x = x0 + i * spread;
     ctx.beginPath();
@@ -579,10 +732,69 @@ function frame(nowMs: number) {
     ctx.fill();
   }
 
-  const label = phase === CALL ? "listen" : phase === RESPOND ? "your turn" : message;
-  const big = phase === GRADE && message === "PERFECT";
-  text(label, W / 2, H * 0.2, big ? 46 : 22, big ? 0.95 : 0.55);
-  text(`round ${round}   best ${best}`, W / 2, H - 18, 14, 0.35);
+  // Floating judgements
+  for (let i = labels.length - 1; i >= 0; i--) {
+    const l = labels[i];
+    l.age += dt;
+    if (l.age > 1.1) {
+      labels.splice(i, 1);
+      continue;
+    }
+    const a = 1 - l.age / 1.1;
+    ctx.globalAlpha = Math.min(1, a * 1.6);
+    ctx.fillStyle = l.col;
+    ctx.font = `700 ${l.size}px system-ui,-apple-system,sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(l.s, l.x, l.y - (1 - a) * 42);
+    ctx.globalAlpha = 1;
+  }
+
+  if (phase === CALL) {
+    const toCall = (phaseAt - now) / BEAT;
+    const toTurn = (respondStart() - now) / BEAT;
+    if (toCall > 0) {
+      // Countdown to the herd playing. Previously the first note just arrived.
+      countdown("the herd plays in", toCall);
+    } else if (visIdx >= seq.length && toTurn <= REST) {
+      countdown("your turn in", toTurn);
+    } else {
+      text("listen", W / 2, H * 0.2, 22, 0.5);
+    }
+  } else if (phase === RESPOND) {
+    // "GO" punches in and fades, so the switch reads instantly.
+    const since = now - goAt;
+    if (since < 0.7) {
+      const k = since / 0.7;
+      text("GO", W / 2, H * 0.2 + 6, 34 + (1 - k) * 26, 0.95 * (1 - k));
+    } else if (turnAt < 0) {
+      // Say plainly that the clock is waiting on them.
+      text("your turn", W / 2, H * 0.2, 22, 0.6);
+      text("the beat starts on your first note", W / 2, H * 0.2 + 26, 15, 0.4);
+    } else {
+      text("your turn", W / 2, H * 0.2, 22, 0.6);
+    }
+  } else {
+    const big = message === "PERFECT";
+    text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
+    if (!big) text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
+    if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 58, 15, 0.5);
+    // Pulse the prompt so it reads as waiting on you, not as a stuck screen.
+    const breathe = 0.55 + 0.35 * Math.sin(nowMs / 320);
+    text(
+      grew ? "tap to add a note" : "tap to hear it again",
+      W / 2,
+      H * 0.2 + (combo ? 96 : 78),
+      19,
+      breathe
+    );
+  }
+
+  if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
+    text("sound on?", W / 2, H - 44, 15, 0.4);
+  }
+
+  text(`${score}`, W / 2, 82, 22, 0.7);
+  text(`${seq.length} notes   best ${best}`, W / 2, H - 18, 14, 0.35);
 }
 
 resize();
