@@ -76,6 +76,8 @@ interface Flyer {
   vx: number;
   vy: number;
   g: number; // own gravity, so flight time is screen-independent
+  armAt: number; // audio time at which a sustained hold becomes a high leap
+  holding: boolean;
   hue: number;
   gait: number;
   boost: number; // seconds of held lift remaining
@@ -536,7 +538,12 @@ function notePower() {
 function heightsLive() {
   return phase === JAM || (phase === COMPOSE && compHard) || (hardcore && phase !== TITLE);
 }
-const HOLD_HIGH = 0.16; // held longer than this counts as asking for a high leap
+const HOLD_HIGH = 0.16;
+// Hardcore has exactly two arcs, so the player's must SNAP to them. Continuous lift
+// gave every intermediate height -- a 50ms tap already overshot the herd's low note,
+// and no hold reproduced its high one. Both sides now fly the identical path: launch
+// low, and if still held at HOLD_HIGH, convert to the one canonical high apex.
+const HIGH_F = 0.667; // held longer than this counts as asking for a high leap
 
 // Gap before the note being added. Straight quarter notes for a long time: the first
 // six notes are pure which-and-when, with no rhythm to learn on top. Held notes come
@@ -866,6 +873,8 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     vy: -vy,
     hue,
     g,
+    armAt: 0,
+    holding: false,
     // Airborne copies keep a stride too, and a random one for crowd extras.
     gait: idx === undefined ? Math.random() * 6.28 : herd[idx].gait,
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
@@ -1378,13 +1387,22 @@ function grab(id: string | number) {
     lastClaimK = -1;
   }
   if (!lastLaunched || !heightsLive()) return;
-  lastLaunched.boost = HOLD;
+  if (hardcore) {
+    // Armed, not lifted: nothing happens unless the hold survives to HOLD_HIGH.
+    lastLaunched.armAt = ac.currentTime + HOLD_HIGH;
+    lastLaunched.holding = true;
+  } else {
+    lastLaunched.boost = HOLD; // jam and compose stay expressive
+  }
   heldBy.set(id, lastLaunched);
 }
 
 function release(id: string | number) {
   const f = heldBy.get(id);
-  if (f) f.boost = 0;
+  if (f) {
+    f.boost = 0;
+    f.holding = false; // let go before HOLD_HIGH and it stays a low hop
+  }
   heldBy.delete(id);
 
   const c = claimed.get(id);
@@ -1660,7 +1678,11 @@ function update(now: number) {
       // In hardcore the call shows the height too: a high note visibly soars, which is
       // the only way the player can learn what to give back.
       const f = leap(seq[visIdx], notePower());
-      if (hgt[visIdx]) f.boost = HOLD; // exactly the lift a held note gets
+      if (hgt[visIdx]) {
+        // The herd "holds" its own note, through the very same mechanism.
+        f.armAt = now + HOLD_HIGH;
+        f.holding = true;
+      }
       visIdx++;
     }
 
@@ -2108,6 +2130,17 @@ function frame(nowMs: number) {
   // --- flyers ---
   for (let i = flyers.length - 1; i >= 0; i--) {
     const f = flyers[i];
+
+    // The snap: one impulse that retargets the apex to the canonical high.
+    if (f.armAt && f.holding && now >= f.armAt) {
+      f.armAt = 0;
+      const rise = f.y - (groundY - H * HIGH_F);
+      if (rise > 0) {
+        const v = Math.sqrt(2 * f.g * rise);
+        if (v > -f.vy) f.vy = -v;
+      }
+    }
+
     // Held notes climb further: quarter gravity while rising and still held. The note
     // already sounded on press, so timing is untouched -- this only shapes the arc.
     if (f.boost > 0 && f.vy < 0) {
