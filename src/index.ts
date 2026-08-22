@@ -1873,7 +1873,7 @@ function frame(nowMs: number) {
   // --- hud ---
   if (phase === TITLE) {
     fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
-    text("Simon says — repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
+    text("Simon says repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
 
     // One obvious target. It breathes so it reads as the live thing on screen.
     btn(playBtn, sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS") : "PLAY", undefined, GOLD);
