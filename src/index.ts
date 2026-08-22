@@ -99,6 +99,63 @@ const flashes: { x: number; y: number; age: number; r: number }[] = [];
 
 // Big banded arcs behind everything. Reserved for high scores so they stay an event.
 const bows: { x: number; y: number; r: number; age: number; life: number }[] = [];
+
+// Drifting cloud bank. Three parallax layers -- far ones small, slow and faint --
+// so the sky has depth and motion even when nothing is happening.
+interface Cloud {
+  x: number;
+  y: number;
+  s: number;
+  v: number;
+  a: number;
+  k: number; // shape variation
+}
+const clouds: Cloud[] = [];
+
+function seedClouds() {
+  clouds.length = 0;
+  for (let i = 0; i < 15; i++) {
+    const layer = i % 3;
+    clouds.push({
+      x: Math.random() * (W + 500) - 250,
+      y: H * (0.04 + Math.random() * 0.56),
+      s: (0.55 + layer * 0.5) * (0.75 + Math.random() * 0.6),
+      v: 4 + layer * 8 + Math.random() * 5,
+      a: 0.07 + layer * 0.05,
+      k: Math.random(),
+    });
+  }
+}
+
+// Angular, faceted clouds rather than puffy ones -- same language as the herd.
+function drawCloud(c: Cloud, lift: number) {
+  const w = 150 * c.s;
+  const h = 40 * c.s;
+  const j = c.k * 0.16;
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  poly([
+    -w * 0.5, h * 0.5,
+    -w * 0.42, -h * 0.1,
+    -w * 0.2, -h * (0.42 + j),
+    w * 0.02, -h * (0.62 - j),
+    w * 0.26, -h * (0.38 + j),
+    w * 0.44, -h * 0.08,
+    w * 0.5, h * 0.5,
+  ]);
+  ctx.fillStyle = `hsla(214,42%,${64 + lift * 14}%,${c.a})`;
+  ctx.fill();
+  // lit upper plane
+  poly([
+    -w * 0.2, -h * (0.42 + j),
+    w * 0.02, -h * (0.62 - j),
+    w * 0.26, -h * (0.38 + j),
+    w * 0.02, -h * 0.16,
+  ]);
+  ctx.fillStyle = `hsla(206,60%,${78 + lift * 12}%,${c.a * 0.85})`;
+  ctx.fill();
+  ctx.restore();
+}
 const BANDS = [0, 28, 52, 120, 200, 250, 288];
 
 function rainbow(x: number, y: number, r: number, life: number) {
@@ -171,6 +228,7 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   groundY = H * 0.82;
   slot = W / (COUNT + 1);
+  if (!clouds.length) seedClouds();
   for (let i = 0; i < herd.length; i++) herd[i].homeX = slot * (i + 1);
 
   playBtn.w = Math.min(260, W * 0.62);
@@ -1298,20 +1356,86 @@ function choice(
   primary: boolean,
   locked?: boolean
 ) {
-  rrect(r.x, r.y, r.w, r.h, 28);
-  ctx.fillStyle = primary ? "rgba(255,255,255,.13)" : "rgba(255,255,255,.04)";
+  btn(r, label, sub, locked ? LOCKED : primary ? GOLD : PLAIN);
+}
+
+// Cut corners, not rounded ones -- the herd is faceted, so the furniture should be.
+function chamfer(x: number, y: number, w: number, h: number, c: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + c, y);
+  ctx.lineTo(x + w - c, y);
+  ctx.lineTo(x + w, y + c);
+  ctx.lineTo(x + w, y + h - c);
+  ctx.lineTo(x + w - c, y + h);
+  ctx.lineTo(x + c, y + h);
+  ctx.lineTo(x, y + h - c);
+  ctx.lineTo(x, y + c);
+  ctx.closePath();
+}
+
+const PLAIN = 0;
+const GOLD = 1; // the primary action, in horn gold
+const LOCKED = 2;
+const QUIET = 3;
+
+function spaced(s: string, x: number, y: number, size: number, col: string, weight: number) {
+  ctx.letterSpacing = `${Math.max(1, size * 0.09)}px`;
+  ctx.fillStyle = col;
+  ctx.font = `${weight} ${size}px system-ui,-apple-system,sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText(s, x, y);
+  ctx.letterSpacing = "0px";
+}
+
+// One button, drawn everywhere. A hard un-blurred shadow reads as a printed slab
+// rather than a soft web widget.
+function btn(
+  r: { x: number; y: number; w: number; h: number },
+  label: string,
+  sub?: string,
+  tone: number = PLAIN
+) {
+  const c = Math.min(13, r.h * 0.3);
+  const off = tone === QUIET ? 2 : 4;
+
+  chamfer(r.x + off, r.y + off, r.w, r.h, c);
+  ctx.fillStyle = tone === LOCKED ? "rgba(6,4,16,.25)" : "rgba(6,4,16,.6)";
   ctx.fill();
-  ctx.strokeStyle = locked
-    ? "rgba(255,255,255,.1)"
-    : primary
-    ? "rgba(255,255,255,.75)"
-    : "rgba(255,255,255,.22)";
-  ctx.lineWidth = 2;
+
+  chamfer(r.x, r.y, r.w, r.h, c);
+  ctx.fillStyle =
+    tone === GOLD
+      ? "#ffd75e"
+      : tone === LOCKED
+      ? "rgba(255,255,255,.03)"
+      : tone === QUIET
+      ? "rgba(255,255,255,.06)"
+      : "rgba(255,255,255,.09)";
+  ctx.fill();
+  ctx.lineWidth = tone === QUIET ? 1.6 : 2.6;
+  ctx.strokeStyle =
+    tone === GOLD
+      ? "#fff1bd"
+      : tone === LOCKED
+      ? "rgba(255,255,255,.12)"
+      : tone === QUIET
+      ? "rgba(255,255,255,.3)"
+      : "rgba(255,255,255,.62)";
   ctx.stroke();
-  const a = locked ? 0.25 : primary ? 0.97 : 0.6;
-  const size = Math.min(17, r.w / 8.6);
-  text(label, r.x + r.w / 2, r.y + 25, size, a);
-  text(sub, r.x + r.w / 2, r.y + 43, Math.min(12, r.w / 13), locked ? 0.3 : primary ? 0.5 : 0.35);
+
+  const fg =
+    tone === GOLD ? "#33254a" : tone === LOCKED ? "rgba(255,255,255,.3)" : "rgba(255,255,255,.95)";
+  const size = Math.min(sub ? 16 : 18, r.w / (label.length * 0.72 + 2));
+  spaced(label, r.x + r.w / 2, r.y + (sub ? r.h * 0.46 : r.h * 0.63), size, fg, 800);
+  if (sub)
+    spaced(
+      sub,
+      r.x + r.w / 2,
+      r.y + r.h * 0.76,
+      Math.min(11.5, r.w / 13),
+      tone === GOLD ? "rgba(51,37,74,.62)" : "rgba(255,255,255,.42)",
+      600
+    );
 }
 
 function rrect(x: number, y: number, w: number, h: number, r: number) {
@@ -1353,13 +1477,21 @@ function frame(nowMs: number) {
   if (ac) update(now);
   if (phase === COMPOSE && compAt > 0) pulseAt = compAt;
 
-  // sky -- brightens with flourish, so a good run visibly lifts the world
+  // Dusk sky rather than the flat purple: deep overhead, warming toward the horizon,
+  // and still dark enough that the additive ribbons and fireworks read against it.
   const lift = phase === TITLE ? 0 : flourish;
-  const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, `hsl(255,45%,${11 + lift * 9}%)`);
-  sky.addColorStop(1, `hsl(275,42%,${19 + lift * 12}%)`);
+  const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+  sky.addColorStop(0, `hsl(230,58%,${9 + lift * 7}%)`);
+  sky.addColorStop(0.55, `hsl(216,52%,${19 + lift * 10}%)`);
+  sky.addColorStop(1, `hsl(198,48%,${31 + lift * 13}%)`);
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, H);
+
+  for (const c of clouds) {
+    c.x -= c.v * dt;
+    if (c.x < -160 * c.s) c.x = W + 160 * c.s;
+    drawCloud(c, lift);
+  }
 
   // Rainbows sit behind the whole scene: sky first, arcs, then everything else.
   for (let i = bows.length - 1; i >= 0; i--) {
@@ -1503,12 +1635,12 @@ function frame(nowMs: number) {
     const ph = ((now - pulseAt) / BEAT) % 1;
     pulse = Math.max(0, 1 - (ph < 0 ? ph + 1 : ph) * 3);
   }
-  ctx.fillStyle = `rgba(255,255,255,${0.09 + pulse * 0.1})`;
+  // Dark land against the bright horizon, so the herd is silhouetted rather than
+  // dissolving into a pale band.
+  ctx.fillStyle = `hsl(208,36%,${13 + lift * 5 + pulse * 6}%)`;
   ctx.fillRect(0, groundY + 16, W, H);
-  if (pulse > 0.02) {
-    ctx.fillStyle = `rgba(255,255,255,${pulse * 0.5})`;
-    ctx.fillRect(0, groundY + 16, W, 2);
-  }
+  ctx.fillStyle = `rgba(150,220,255,${0.18 + pulse * 0.5})`;
+  ctx.fillRect(0, groundY + 16, W, 2);
 
   for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait);
 
@@ -1524,32 +1656,13 @@ function frame(nowMs: number) {
     text("the herd plays a phrase. play it back.", W / 2, H * 0.24 + 42, Math.min(19, W / 26), 0.55);
 
     // One obvious target. It breathes so it reads as the live thing on screen.
-    const glowB = 0.5 + 0.5 * Math.sin(nowMs / 520);
-    rrect(playBtn.x, playBtn.y, playBtn.w, playBtn.h, 31);
-    ctx.fillStyle = `rgba(255,255,255,${0.07 + glowB * 0.05})`;
-    ctx.fill();
-    ctx.strokeStyle = `rgba(255,255,255,${0.4 + glowB * 0.35})`;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    text(
-      sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS PATTERN") : "PLAY",
-      W / 2,
-      playBtn.y + 41,
-      sharedIn ? Math.min(23, W / 15) : 27,
-      0.95
-    );
+    btn(playBtn, sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS") : "PLAY", undefined, GOLD);
     if (sharedIn)
       text("someone sent you this", W / 2, playBtn.y - 16, Math.min(15, W / 34), 0.45);
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
-    rrect(makeBtn.x, makeBtn.y, makeBtn.w, makeBtn.h, 22);
-    ctx.fillStyle = "rgba(255,255,255,.04)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.26)";
-    ctx.lineWidth = 1.6;
-    ctx.stroke();
-    text("MAKE A PATTERN", W / 2, makeBtn.y + 28, Math.min(16, W / 26), 0.66);
+    btn(makeBtn, "MAKE A PATTERN");
 
     if (best) {
       text(
@@ -1610,13 +1723,7 @@ function frame(nowMs: number) {
       [sendBtn, "COPY LINK", on],
       [backBtn, "BACK", true],
     ] as [typeof clearBtn, string, boolean][]) {
-      rrect(r.x, r.y, r.w, r.h, 23);
-      ctx.fillStyle = live ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.03)";
-      ctx.fill();
-      ctx.strokeStyle = live ? "rgba(255,255,255,.4)" : "rgba(255,255,255,.12)";
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-      text(label, r.x + r.w / 2, r.y + 28, Math.min(14, r.w / 6.4), live ? 0.9 : 0.3);
+      btn(r, label, undefined, live ? (label === "COPY LINK" ? GOLD : PLAIN) : LOCKED);
     }
     if (!on) text("at least two notes to send", W / 2, hearBtn.y + 66, 12, 0.3);
     return;
@@ -1737,18 +1844,8 @@ function frame(nowMs: number) {
     if (grew) choice(nextBtn, "NEXT", "one note longer", true);
     else choice(nextBtn, "NEXT", "needs 50%", false, true);
 
-    for (const [r, label] of [
-      [blindBtn, "TRY, NO PREVIEW"],
-      [replayBtn, "INSTANT REPLAY"],
-    ] as [typeof replayBtn, string][]) {
-      rrect(r.x, r.y, r.w, r.h, 20);
-      ctx.fillStyle = "rgba(255,255,255,.05)";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,.22)";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      text(label, r.x + r.w / 2, r.y + 25, Math.min(14, r.w / 10.5), 0.62);
-    }
+    btn(blindBtn, "NO PREVIEW", undefined, QUIET);
+    btn(replayBtn, "REPLAY", undefined, QUIET);
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
@@ -1757,27 +1854,8 @@ function frame(nowMs: number) {
 
   {
     const armed = restartArm > 0 && now < restartArm;
-    rrect(restartBtn.x, restartBtn.y, restartBtn.w, restartBtn.h, 17);
-    ctx.fillStyle = armed ? "rgba(255,140,140,.22)" : "rgba(255,255,255,.05)";
-    ctx.fill();
-    ctx.strokeStyle = armed ? "rgba(255,150,150,.7)" : "rgba(255,255,255,.18)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    text(
-      armed ? "sure?" : "restart",
-      restartBtn.x + restartBtn.w / 2,
-      restartBtn.y + 22,
-      14,
-      armed ? 0.95 : 0.5
-    );
-
-    rrect(shareBtn.x, shareBtn.y, shareBtn.w, shareBtn.h, 17);
-    ctx.fillStyle = "rgba(255,255,255,.05)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.18)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    text("copy link", shareBtn.x + shareBtn.w / 2, shareBtn.y + 22, 13, 0.5);
+    btn(restartBtn, armed ? "SURE?" : "RESTART", undefined, armed ? GOLD : QUIET);
+    btn(shareBtn, "COPY", undefined, QUIET);
   }
 
   if (ac.state !== "running") {
