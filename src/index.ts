@@ -135,6 +135,7 @@ const makeBtn = { x: 0, y: 0, w: 0, h: 0 };
 const clearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const sendBtn = { x: 0, y: 0, w: 0, h: 0 };
 const backBtn = { x: 0, y: 0, w: 0, h: 0 };
+const hearBtn = { x: 0, y: 0, w: 0, h: 0 };
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -203,14 +204,17 @@ function resize() {
   makeBtn.x = (W - makeBtn.w) / 2;
   makeBtn.y = playBtn.y + playBtn.h + 76;
 
-  const cw = Math.min(148, (W - 56) / 3);
+  // Four across: hear it, wipe it, copy it, leave.
+  const cw = Math.min(120, (W - 60) / 4);
   const cy = groundY - 122;
-  clearBtn.w = sendBtn.w = backBtn.w = cw;
-  clearBtn.h = sendBtn.h = backBtn.h = 46;
-  clearBtn.y = sendBtn.y = backBtn.y = cy;
-  sendBtn.x = W / 2 - cw / 2;
-  clearBtn.x = sendBtn.x - cw - 8;
-  backBtn.x = sendBtn.x + cw + 8;
+  hearBtn.w = clearBtn.w = sendBtn.w = backBtn.w = cw;
+  hearBtn.h = clearBtn.h = sendBtn.h = backBtn.h = 46;
+  hearBtn.y = clearBtn.y = sendBtn.y = backBtn.y = cy;
+  const row = W / 2 - (cw * 4 + 24) / 2;
+  hearBtn.x = row;
+  clearBtn.x = row + cw + 8;
+  sendBtn.x = row + (cw + 8) * 2;
+  backBtn.x = row + (cw + 8) * 3;
 
   const sw = Math.min(168, (W - 56) / 2);
   blindBtn.w = replayBtn.w = sw;
@@ -696,6 +700,7 @@ function enterCompose() {
   compAt = -1;
   phase = COMPOSE;
   phaseAt = ac.currentTime;
+  // Click straight away: you need the beat before the first note, not after it.
   pulseAt = ac.currentTime;
   clickIdx = 0;
   message = "";
@@ -723,18 +728,68 @@ function composeTap(i: number) {
   leap(i, 0.5);
 }
 
+// Copies the bare URL and nothing else. Copying a whole sentence means pasting prose
+// into a URL bar, and the old code also claimed success on paths where it had copied
+// nothing at all.
+function copyLink(url: string, y: number) {
+  const done = (good: boolean) =>
+    say(
+      W / 2,
+      y,
+      good ? "link copied" : "couldn't copy",
+      good ? "rgba(180,255,210,1)" : "rgba(255,170,170,1)",
+      22
+    );
+  const nav = navigator as any;
+  try {
+    if (nav.clipboard && nav.clipboard.writeText) {
+      nav.clipboard.writeText(url).then(() => done(true), () => done(legacyCopy(url)));
+      return;
+    }
+  } catch (e) {}
+  done(legacyCopy(url));
+}
+
+// Older Safari refuses the async clipboard outside narrow conditions; a selected
+// off-screen textarea still works there.
+function legacyCopy(url: string) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = url;
+    ta.style.cssText = "position:fixed;top:-99px;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function runUrl() {
+  return location.origin + location.pathname + "#" + encodeRun();
+}
+
+// Play the pattern back so you can hear what you've written before sending it.
+function previewPattern(now: number) {
+  if (!seq.length) return;
+  pending.length = 0;
+  const t0 = now + 0.35;
+  for (let k = 0; k < seq.length; k++) {
+    const at = t0 + offs[k] * BEAT;
+    note(NOTES[seq[k]], herd[seq[k]].voice, at, 0.24);
+    pending.push({ at, i: seq[k], power: 0.65 });
+  }
+  // Re-anchor the click to the playback so the pattern lands on the pulse.
+  pulseAt = t0;
+  clickIdx = 0;
+}
+
 function sendPattern() {
   if (seq.length < 2) return;
-  taps = [];
-  const url = location.origin + location.pathname + "#" + encodeRun();
-  const msg = `Can you play this back? ${seq.length} notes: ${url}`;
-  const ok = () => say(W / 2, H * 0.5, "link copied!", "rgba(180,255,210,1)", 22);
-  try {
-    const nav = navigator as any;
-    if (nav.share) nav.share({ title: "Unicorn Storm", text: msg, url }).catch(() => {});
-    else if (nav.clipboard) nav.clipboard.writeText(msg).then(ok, () => {});
-    else ok();
-  } catch (e) {}
+  taps = []; // a pattern is the challenge, not a performance
+  copyLink(runUrl(), H * 0.5);
 }
 
 // Retry the same phrase without sitting through the herd playing it again. Once you
@@ -913,16 +968,7 @@ function column(x: number) {
 // Two taps to restart. Losing a long run to a misplaced thumb would be far worse
 // than the small friction of confirming.
 function shareRun() {
-  const clean = retries === 0 ? " with no retries" : ` (${retries} retries)`;
-  const url = location.origin + location.pathname + "#" + encodeRun();
-  const msg = `UNICORN STORM: I echoed a ${seq.length}-note phrase for ${score} points${clean}. Watch it: ${url}`;
-  const ok = () => say(W / 2, H * 0.44, "copied!", "rgba(180,255,210,1)", 22);
-  try {
-    const nav = navigator as any;
-    if (nav.share) nav.share({ title: "Unicorn Storm", text: msg }).catch(() => {});
-    else if (nav.clipboard) nav.clipboard.writeText(msg).then(ok, () => {});
-    else ok();
-  } catch (e) {}
+  copyLink(runUrl(), H * 0.44);
 }
 
 function pokeRestart() {
@@ -944,10 +990,12 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   }
 
   if (phase === COMPOSE) {
-    if (inRect(x, y, clearBtn)) {
+    if (inRect(x, y, hearBtn)) previewPattern(ac.currentTime);
+    else if (inRect(x, y, clearBtn)) {
       seq = [];
       offs = [];
       compAt = -1;
+      pending.length = 0;
     } else if (inRect(x, y, sendBtn)) sendPattern();
     else if (inRect(x, y, backBtn)) {
       seq = [];
@@ -1094,7 +1142,7 @@ function update(now: number) {
   }
 
   // Metronome runs through the call and the response, but not while waiting.
-  if (phase === CALL || phase === RESPOND || (phase === COMPOSE && compAt > 0)) {
+  if (phase === CALL || phase === RESPOND || phase === COMPOSE) {
     for (;;) {
       const at = pulseAt + clickIdx * BEAT;
       if (at > now + 0.12) break;
@@ -1552,13 +1600,14 @@ function frame(nowMs: number) {
 
     const on = seq.length >= 2;
     // Notes you lay down keep flying through this row, so give the controls a bed.
-    rrect(clearBtn.x - 12, clearBtn.y - 10, backBtn.x + backBtn.w - clearBtn.x + 24, clearBtn.h + 20, 30);
+    rrect(hearBtn.x - 12, hearBtn.y - 10, backBtn.x + backBtn.w - hearBtn.x + 24, hearBtn.h + 20, 30);
     ctx.fillStyle = "rgba(12,9,28,.66)";
     ctx.fill();
 
     for (const [r, label, live] of [
+      [hearBtn, "HEAR", seq.length > 0],
       [clearBtn, "CLEAR", seq.length > 0],
-      [sendBtn, "SEND", on],
+      [sendBtn, "COPY LINK", on],
       [backBtn, "BACK", true],
     ] as [typeof clearBtn, string, boolean][]) {
       rrect(r.x, r.y, r.w, r.h, 23);
@@ -1567,9 +1616,9 @@ function frame(nowMs: number) {
       ctx.strokeStyle = live ? "rgba(255,255,255,.4)" : "rgba(255,255,255,.12)";
       ctx.lineWidth = 1.6;
       ctx.stroke();
-      text(label, r.x + r.w / 2, r.y + 28, Math.min(15, r.w / 5.4), live ? 0.9 : 0.3);
+      text(label, r.x + r.w / 2, r.y + 28, Math.min(14, r.w / 6.4), live ? 0.9 : 0.3);
     }
-    if (!on) text("at least two notes to send", W / 2, clearBtn.y + 66, 12, 0.3);
+    if (!on) text("at least two notes to send", W / 2, hearBtn.y + 66, 12, 0.3);
     return;
   }
 
@@ -1728,7 +1777,7 @@ function frame(nowMs: number) {
     ctx.strokeStyle = "rgba(255,255,255,.18)";
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    text("share", shareBtn.x + shareBtn.w / 2, shareBtn.y + 22, 14, 0.5);
+    text("copy link", shareBtn.x + shareBtn.w / 2, shareBtn.y + 22, 13, 0.5);
   }
 
   if (ac.state !== "running") {
