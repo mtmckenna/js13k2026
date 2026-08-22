@@ -24,9 +24,11 @@ const BEAT = 60 / BPM;
 const WINDOW = 0.36; // how far off the beat still counts, in seconds
 // Ceremony is expensive. A 2-note phrase takes ~1.5s to play, so multi-bar
 // countdowns around it meant waiting far longer than playing.
-const REST = 2; // beats between the call and your turn
-const LEADIN = 4; // opening countdown -- only for the first round of a run
-const LEADIN_NEXT = 2; // after that, tapping "add a note" already said "ready"
+// Every countdown reads 3, 2, 1 -- the same shape before the herd plays and before
+// your turn, so there's one rhythm to learn rather than three.
+const REST = 3; // beats between the call and your turn
+const LEADIN = 3; // countdown before the herd plays
+const LEADIN_NEXT = 3;
 
 const canvas: HTMLCanvasElement = document.createElement("canvas");
 const ctx: CanvasRenderingContext2D = canvas.getContext("2d");
@@ -122,6 +124,7 @@ const againBtn = { x: 0, y: 0, w: 0, h: 0 };
 const nextBtn = { x: 0, y: 0, w: 0, h: 0 };
 const shareBtn = { x: 0, y: 0, w: 0, h: 0 };
 const replayBtn = { x: 0, y: 0, w: 0, h: 0 };
+const blindBtn = { x: 0, y: 0, w: 0, h: 0 };
 const makeBtn = { x: 0, y: 0, w: 0, h: 0 };
 const clearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const sendBtn = { x: 0, y: 0, w: 0, h: 0 };
@@ -203,10 +206,12 @@ function resize() {
   clearBtn.x = sendBtn.x - cw - 8;
   backBtn.x = sendBtn.x + cw + 8;
 
-  replayBtn.w = Math.min(232, W - 60);
-  replayBtn.h = 40;
-  replayBtn.x = (W - replayBtn.w) / 2;
-  replayBtn.y = gy + gh + 12;
+  const sw = Math.min(168, (W - 56) / 2);
+  blindBtn.w = replayBtn.w = sw;
+  blindBtn.h = replayBtn.h = 40;
+  blindBtn.y = replayBtn.y = gy + gh + 12;
+  blindBtn.x = W / 2 - sw - 8;
+  replayBtn.x = W / 2 + 8;
 }
 addEventListener("resize", resize);
 addEventListener("orientationchange", resize);
@@ -724,6 +729,30 @@ function sendPattern() {
   } catch (e) {}
 }
 
+// Retry the same phrase without sitting through the herd playing it again. Once you
+// know the phrase, the preview is just a wait.
+function retryBlind(now: number) {
+  streak = 0;
+  retries++;
+  mult = 1;
+  judged = seq.map(() => -1);
+  taps = [];
+  combo = 0;
+  pending.length = 0;
+  bows.length = 0;
+  schedIdx = visIdx = seq.length; // nothing left to schedule or animate
+  cued = true;
+  clickIdx = 0;
+  phase = RESPOND;
+  phaseAt = now;
+  pulseAt = now;
+  turnAt = -1;
+  goAt = now;
+  flourish = 0;
+  message = "";
+  round++;
+}
+
 function startChallenge() {
   ensureAudio();
   const go = () => {
@@ -788,8 +817,11 @@ function tap(i: number) {
   ensureAudio();
   const now = ac.currentTime;
 
+  // Hands off while the herd counts in and plays: a stray note muddles the phrase
+  // you're trying to memorise, and nothing tapped here could count anyway.
+  if (phase === CALL) return;
+
   if (phase !== RESPOND) {
-    // Free play outside your turn -- noodling should always be allowed.
     note(NOTES[i], herd[i].voice, now, 0.2);
     leap(i, 0.35);
     return;
@@ -949,6 +981,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     if (inRect(x, y, againBtn)) newRound(now, false);
     else if (grew && inRect(x, y, nextBtn)) newRound(now, true);
     else if (inRect(x, y, replayBtn)) startReplay(now);
+    else if (inRect(x, y, blindBtn)) retryBlind(now);
     return;
   }
 
@@ -1638,13 +1671,18 @@ function frame(nowMs: number) {
     if (grew) choice(nextBtn, "NEXT", "one note longer", true);
     else choice(nextBtn, "NEXT", "needs 50%", false, true);
 
-    rrect(replayBtn.x, replayBtn.y, replayBtn.w, replayBtn.h, 20);
-    ctx.fillStyle = "rgba(255,255,255,.05)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,.22)";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    text("INSTANT REPLAY", W / 2, replayBtn.y + 25, 15, 0.62);
+    for (const [r, label] of [
+      [blindBtn, "TRY, NO PREVIEW"],
+      [replayBtn, "INSTANT REPLAY"],
+    ] as [typeof replayBtn, string][]) {
+      rrect(r.x, r.y, r.w, r.h, 20);
+      ctx.fillStyle = "rgba(255,255,255,.05)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,.22)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      text(label, r.x + r.w / 2, r.y + 25, Math.min(14, r.w / 10.5), 0.62);
+    }
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
