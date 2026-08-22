@@ -248,6 +248,12 @@ const hearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const jamBtn = { x: 0, y: 0, w: 0, h: 0 };
 const beatBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hardBtn = { x: 0, y: 0, w: 0, h: 0 };
+const copyBtn = { x: 0, y: 0, w: 0, h: 0 };
+// Set when there is something worth sharing. Copying was a side effect of pressing
+// STOP or DONE -- invisible, and impossible to repeat if you lost the clipboard.
+let shareUrl = "";
+let shareWhat = "";
+let copiedAt = -9;
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -296,6 +302,11 @@ function resize() {
   restartBtn.h = 34;
   restartBtn.x = 12;
   restartBtn.y = 12 + topPad;
+
+  copyBtn.w = Math.min(238, W - 80);
+  copyBtn.h = 48;
+  copyBtn.x = (W - copyBtn.w) / 2;
+  copyBtn.y = H * 0.16 + 96;
 
   beatBtn.w = 92;
   beatBtn.h = 30;
@@ -958,6 +969,11 @@ function composeTap(i: number) {
 // Copies the bare URL and nothing else. Copying a whole sentence means pasting prose
 // into a URL bar, and the old code also claimed success on paths where it had copied
 // nothing at all.
+function doCopy() {
+  copiedAt = ac ? ac.currentTime : 0;
+  copyLink(shareUrl, copyBtn.y - 18);
+}
+
 function copyLink(url: string, y: number) {
   const done = (good: boolean) =>
     say(
@@ -1026,7 +1042,9 @@ function finishPattern() {
   if (seq.length < 2) return;
   taps = []; // a pattern is the challenge, not a performance
   patternDone = true;
-  copyLink(runUrl(), H * 0.5);
+  shareUrl = runUrl();
+  shareWhat = `your pattern — ${seq.length} notes`;
+  copiedAt = -9;
 }
 
 // Retry the same phrase without sitting through the herd playing it again. Once you
@@ -1314,16 +1332,23 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       phase = TITLE;
       return;
     }
+    if (shareUrl && inRect(x, y, copyBtn)) {
+      doCopy();
+      return;
+    }
     if (inRect(x, y, shareBtn)) {
       if (jamRec) {
         jamRec = false;
         if (jamTaps.length > 1) {
           taps = jamTaps;
-          copyLink(location.origin + location.pathname + "#j." + encodeTaps(jamTaps), H * 0.5);
+          shareUrl = location.origin + location.pathname + "#j." + encodeTaps(jamTaps);
+          shareWhat = `your jam — ${jamTaps.length} notes`;
+          copiedAt = -9;
         }
       } else {
         jamRec = true;
         jamTaps = [];
+        shareUrl = "";
       }
       return;
     }
@@ -1335,12 +1360,17 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   }
 
   if (phase === COMPOSE) {
+    if (patternDone && shareUrl && inRect(x, y, copyBtn)) {
+      doCopy();
+      return;
+    }
     if (inRect(x, y, hearBtn)) previewPattern(ac.currentTime);
     else if (inRect(x, y, clearBtn)) {
       seq = [];
       offs = [];
       compAt = -1;
       patternDone = false;
+      shareUrl = "";
       pending.length = 0;
     } else if (inRect(x, y, sendBtn)) finishPattern();
     else if (inRect(x, y, backBtn)) {
@@ -1398,7 +1428,8 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     return;
   }
   if (inRect(x, y, shareBtn)) {
-    shareRun();
+    shareUrl = runUrl();
+    doCopy();
     return;
   }
   restartArm = -1; // any tap elsewhere withdraws the offer
@@ -1812,6 +1843,15 @@ function slotColor(i: number, cursor: number) {
   return i === cursor ? "rgba(255,255,255,.7)" : "rgba(255,255,255,.16)";
 }
 
+// The share affordance. Says what it will hand over, and confirms on the button
+// itself rather than in a toast that's gone before you look up.
+function drawCopy(now: number) {
+  const fresh = now - copiedAt < 3;
+  text(shareWhat, W / 2, copyBtn.y - 14, 14, 0.5);
+  btn(copyBtn, fresh ? "COPIED — PASTE IT" : "COPY LINK", undefined, fresh ? PLAIN : GOLD);
+  if (fresh) text("send it to someone to try", W / 2, copyBtn.y + copyBtn.h + 20, 13, 0.45);
+}
+
 function text(s: string, x: number, y: number, size: number, alpha: number) {
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
   ctx.font = `600 ${size}px system-ui,-apple-system,sans-serif`;
@@ -2112,7 +2152,7 @@ function frame(nowMs: number) {
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     btn(shareBtn, jamRec ? "STOP" : "REC", undefined, jamRec ? GOLD : QUIET);
     if (jamRec) text(`recording — ${jamTaps.length} notes`, W / 2, H * 0.14 + 82, 13, 0.6);
-    else if (jamTaps.length > 1) text("link copied — send your jam", W / 2, H * 0.14 + 82, 13, 0.5);
+    else if (shareUrl) drawCopy(now);
     text("jam", W / 2, H * 0.14, 26, 0.8);
     text("no timer, no score — hold a unicorn to send it higher", W / 2, H * 0.14 + 26, 15, 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
@@ -2166,8 +2206,8 @@ function frame(nowMs: number) {
     }
     const hintY = hearBtn.y + 82;
     if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
-    else if (patternDone) text("link copied — send it to someone", W / 2, hintY, 13, 0.6);
-    else text("DONE finishes it and copies the link", W / 2, hintY, 12, 0.34);
+    else if (!patternDone) text("DONE finishes it and gives you a link", W / 2, hintY, 12, 0.34);
+    if (patternDone && shareUrl) drawCopy(now);
 
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     return;
@@ -2301,7 +2341,7 @@ function frame(nowMs: number) {
     const armed = restartArm > 0 && now < restartArm;
     btn(restartBtn, armed ? "SURE?" : "RESTART", undefined, armed ? GOLD : QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
-    btn(shareBtn, "COPY", undefined, QUIET);
+    btn(shareBtn, now - copiedAt < 3 ? "COPIED" : "COPY", undefined, QUIET);
   }
 
   if (ac.state !== "running") {
