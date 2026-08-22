@@ -26,7 +26,10 @@ const WINDOW = 0.36; // how far off the beat still counts, in seconds
 // countdowns around it meant waiting far longer than playing.
 // Every countdown reads 3, 2, 1 -- the same shape before the herd plays and before
 // your turn, so there's one rhythm to learn rather than three.
-const REST = 3; // beats between the call and your turn
+// One beat between the phrase ending and your turn -- just enough that the herd's
+// last note doesn't blur into your first. A longer gap was dead air: the response
+// clock starts on your tap anyway, so there is nothing to count you in to.
+const REST = 1;
 const LEADIN = 3; // countdown before the herd plays
 const LEADIN_NEXT = 3;
 
@@ -1032,10 +1035,10 @@ function update(now: number) {
 
     // A rising two-note pickup on the beat before your turn, scheduled on the audio
     // clock like everything else. The handover was the thing that felt ambiguous.
-    if (!cued && now > respondStart() - BEAT * 1.6) {
+    if (!cued && now > respondStart() - BEAT * 1.1) {
       cued = true;
-      note(NOTES[0] * 2, "sine", respondStart() - BEAT, 0.13);
-      note(NOTES[2] * 2, "sine", respondStart() - BEAT * 0.5, 0.15);
+      note(NOTES[0] * 2, "sine", respondStart() - BEAT * 0.5, 0.13);
+      note(NOTES[2] * 2, "sine", respondStart() - BEAT * 0.25, 0.15);
     }
 
     if (now >= respondStart() - BEAT * 0.5) {
@@ -1505,7 +1508,7 @@ function frame(nowMs: number) {
     }
 
     // Demoted to small print. As a shout it out-competed the actual call to action.
-    text("best with sound on — on iPad check the silent switch", W / 2, H - 20, Math.min(14, W / 38), 0.35);
+    text("turn on yer sound", W / 2, H - 20, Math.min(16, W / 30), 0.42);
     return;
   }
 
@@ -1629,7 +1632,7 @@ function frame(nowMs: number) {
     if (toCall > 0) {
       // Countdown to the herd playing. Previously the first note just arrived.
       countdown("the herd plays in", toCall);
-    } else if (visIdx >= seq.length && toTurn <= REST) {
+    } else if (REST > 1 && visIdx >= seq.length && toTurn <= REST) {
       countdown("your turn in", toTurn);
     } else {
       text("listen", W / 2, H * 0.2, 22, 0.5);
