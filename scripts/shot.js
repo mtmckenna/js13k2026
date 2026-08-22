@@ -18,6 +18,7 @@
 //   --size <WxH>     viewport                (default 800x600)
 //   --wait <ms>      settle before input     (default 500)
 //   --keys <spec>    comma-separated holds; "+" chords them. e.g. ArrowRight:500
+//   --click <spec>   ";"-separated taps: "450,420;150,500" -- add "@400" to wait after
 //   --settle <ms>    settle after input      (default 300)
 //   --timeout <ms>   overall bail-out        (default 30000)
 //
@@ -144,13 +145,25 @@ try {
 		for (const n of group) await send("Input.dispatchKeyEvent", keyEvent("keyUp", n));
 	}
 
-	if (argv.keys) await sleep(SETTLE);
+	// Clicks: needed to reach on-screen buttons, which keyboard input cannot.
+	for (const step of String(argv.click ?? "").split(";").filter(Boolean)) {
+		const [pos, hold] = step.split("@");
+		const [cx, cy] = pos.split(",").map(Number);
+		const base = { x: cx, y: cy, button: "left", clickCount: 1 };
+		await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base, buttons: 0 });
+		await send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 });
+		await sleep(35);
+		await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 });
+		await sleep(int(hold, 260));
+	}
+
+	if (argv.keys || argv.click) await sleep(SETTLE);
 
 	const { data } = await send("Page.captureScreenshot", { format: "png" });
 	mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
 	writeFileSync(OUT, Buffer.from(data, "base64"));
 
-	console.log(`shot: ${OUT} (${W}x${H}) <- ${URL_}${argv.keys ? ` keys=${argv.keys}` : ""}`);
+	console.log(`shot: ${OUT} (${W}x${H}) <- ${URL_}${argv.keys ? ` keys=${argv.keys}` : ""}${argv.click ? ` click=${argv.click}` : ""}`);
 	if (logs.length) {
 		console.log("--- page output ---");
 		for (const l of logs) console.log(l);

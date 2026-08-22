@@ -121,6 +121,11 @@ const restartBtn = { x: 0, y: 0, w: 0, h: 0 };
 const againBtn = { x: 0, y: 0, w: 0, h: 0 };
 const nextBtn = { x: 0, y: 0, w: 0, h: 0 };
 const shareBtn = { x: 0, y: 0, w: 0, h: 0 };
+const replayBtn = { x: 0, y: 0, w: 0, h: 0 };
+const makeBtn = { x: 0, y: 0, w: 0, h: 0 };
+const clearBtn = { x: 0, y: 0, w: 0, h: 0 };
+const sendBtn = { x: 0, y: 0, w: 0, h: 0 };
+const backBtn = { x: 0, y: 0, w: 0, h: 0 };
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -183,6 +188,25 @@ function resize() {
   againBtn.y = nextBtn.y = gy;
   againBtn.x = W / 2 - gw - 8;
   nextBtn.x = W / 2 + 8;
+
+  makeBtn.w = Math.min(230, W * 0.56);
+  makeBtn.h = 44;
+  makeBtn.x = (W - makeBtn.w) / 2;
+  makeBtn.y = playBtn.y + playBtn.h + 76;
+
+  const cw = Math.min(148, (W - 56) / 3);
+  const cy = groundY - 122;
+  clearBtn.w = sendBtn.w = backBtn.w = cw;
+  clearBtn.h = sendBtn.h = backBtn.h = 46;
+  clearBtn.y = sendBtn.y = backBtn.y = cy;
+  sendBtn.x = W / 2 - cw / 2;
+  clearBtn.x = sendBtn.x - cw - 8;
+  backBtn.x = sendBtn.x + cw + 8;
+
+  replayBtn.w = Math.min(232, W - 60);
+  replayBtn.h = 40;
+  replayBtn.x = (W - replayBtn.w) / 2;
+  replayBtn.y = gy + gh + 12;
 }
 addEventListener("resize", resize);
 addEventListener("orientationchange", resize);
@@ -284,6 +308,8 @@ const TITLE = 0;
 const CALL = 1;
 const RESPOND = 2;
 const GRADE = 3;
+const REPLAY = 4;
+const COMPOSE = 5;
 
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
@@ -351,6 +377,75 @@ const FAIL = ["not quite", "so close", "almost had it"];
 let combo = 0; // midair crossings this round
 let cued = false; // "your turn" cue scheduled?
 let goAt = -9; // audio time the turn began, for the GO flourish
+
+// Every tap of the turn, as (unicorn, seconds after the downbeat). This is the whole
+// round: seq + offs say what was asked, taps say what was actually played.
+let taps: { i: number; dt: number }[] = [];
+let replayEnd = 0;
+let sharedIn = false; // arrived via a shared replay link
+
+// Compact enough for a URL hash: notes as digits, gaps as one char each, and every
+// tap as a digit plus two base36 chars of 20ms units.
+function encodeRun() {
+  let g = "";
+  for (let i = 1; i < offs.length; i++) {
+    const d = offs[i] - offs[i - 1];
+    g += d === 0.5 ? "0" : d === 2 ? "2" : "1";
+  }
+  let t = "";
+  for (const p of taps) {
+    const u = Math.min(1295, Math.max(0, Math.round(p.dt * 50)));
+    t += p.i + ("0" + u.toString(36)).slice(-2);
+  }
+  return seq.join("") + "." + g + "." + t;
+}
+
+function decodeRun(code: string) {
+  try {
+    const [a, g, t] = code.split(".");
+    if (!a || a.length < 2) return false;
+    const q = a.split("").map(Number);
+    if (q.some((v) => !(v >= 0 && v < COUNT))) return false;
+    const o = [0];
+    for (let i = 0; i < g.length; i++) o.push(o[i] + (g[i] === "0" ? 0.5 : g[i] === "2" ? 2 : 1));
+    if (o.length !== q.length) return false;
+    const tp = [];
+    for (let i = 0; i + 2 < t.length; i += 3) {
+      const u = +t[i];
+      if (!(u >= 0 && u < COUNT)) return false;
+      tp.push({ i: u, dt: parseInt(t.slice(i + 1, i + 3), 36) / 50 });
+    }
+    seq = q;
+    offs = o;
+    taps = tp;
+    judged = seq.map(() => -1);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Plays the round back exactly as it happened: the herd's phrase, then the attempt,
+// with its real timing errors intact. Hearing your own rushing is worth more than
+// being told about it.
+function startReplay(now: number) {
+  const t0 = now + BEAT;
+  pending.length = 0;
+  for (let k = 0; k < seq.length; k++) {
+    const at = t0 + offs[k] * BEAT;
+    note(NOTES[seq[k]], herd[seq[k]].voice, at, 0.24);
+    pending.push({ at, i: seq[k], power: 0.7 });
+  }
+  const gap = (offs[offs.length - 1] + REST) * BEAT;
+  for (const p of taps) {
+    const at = t0 + gap + p.dt;
+    note(NOTES[p.i], herd[p.i].voice, at, 0.22);
+    pending.push({ at, i: p.i, power: 0.7 });
+  }
+  const lastTap = taps.length ? taps[taps.length - 1].dt : 0;
+  replayEnd = t0 + gap + lastTap + 1.4;
+  phase = REPLAY;
+}
 // The response clock starts on the player's FIRST tap, not on a countdown. The
 // opening note is therefore a gimme: it can't be early or late, it just sets the
 // beat everything after it is measured against.
@@ -360,18 +455,22 @@ let pulseAt = 0; // what the metronome and ground flash are anchored to
 // Grow by APPENDING one note, never by regenerating. A fresh random phrase every
 // round is a memory test with no memory in it -- the whole gentleness of Simon comes
 // from the phrase you already know staying put, with one new note on the end.
-function newRound(now: number, grow: boolean) {
+function newRound(now: number, grow: boolean, keep?: boolean) {
   // Retrying is always allowed, but it costs the streak. That's the whole answer to
   // "how do we tell a clean run from a farmed one" -- no bans, just a price.
-  if (!grow) {
-    streak = 0;
-    retries++;
-  } else if (round > 0) {
-    streak++;
+  if (!keep) {
+    if (!grow) {
+      streak = 0;
+      retries++;
+    } else if (round > 0) {
+      streak++;
+    }
+    mult = Math.min(5, 1 + streak * 0.5);
   }
-  mult = Math.min(5, 1 + streak * 0.5);
 
-  if (!seq.length) {
+  if (keep) {
+    // a pattern arrived from someone else -- play it as given
+  } else if (!seq.length) {
     seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
     offs = [0, 1];
   } else if (grow) {
@@ -380,6 +479,7 @@ function newRound(now: number, grow: boolean) {
   }
 
   judged = seq.map(() => -1);
+  taps = [];
   schedIdx = visIdx = 0;
   clickIdx = round === 0 ? -LEADIN : -LEADIN_NEXT; // click through the countdown to set tempo
   cued = false;
@@ -572,6 +672,85 @@ function freePlay(i: number) {
   leap(i, 0.35);
 }
 
+// Take on a pattern somebody sent, instead of a generated one.
+let compAt = -1; // audio time of the first note laid down
+
+function enterCompose() {
+  ensureAudio();
+  seq = [];
+  offs = [];
+  taps = [];
+  compAt = -1;
+  phase = COMPOSE;
+  phaseAt = ac.currentTime;
+  pulseAt = ac.currentTime;
+  clickIdx = 0;
+  message = "";
+}
+
+// Notes land on the nearest half beat. Free-form timing would encode fine but would
+// be almost impossible for a friend to play back, and unplayable patterns are not
+// a challenge, just a wall.
+function composeTap(i: number) {
+  if (seq.length >= 16) return;
+  const now = ac.currentTime;
+  if (compAt < 0) {
+    compAt = now;
+    pulseAt = now;
+    clickIdx = 0;
+    offs.push(0);
+  } else {
+    let o = Math.round((now - compAt) / (BEAT * 0.5)) * 0.5;
+    const last = offs[offs.length - 1];
+    if (o <= last) o = last + 0.5;
+    offs.push(o);
+  }
+  seq.push(i);
+  note(NOTES[i], herd[i].voice, now, 0.22);
+  leap(i, 0.5);
+}
+
+function sendPattern() {
+  if (seq.length < 2) return;
+  taps = [];
+  const url = location.origin + location.pathname + "#" + encodeRun();
+  const msg = `Can you play this back? ${seq.length} notes: ${url}`;
+  const ok = () => say(W / 2, H * 0.5, "link copied!", "rgba(180,255,210,1)", 22);
+  try {
+    const nav = navigator as any;
+    if (nav.share) nav.share({ title: "Unicorn Storm", text: msg, url }).catch(() => {});
+    else if (nav.clipboard) nav.clipboard.writeText(msg).then(ok, () => {});
+    else ok();
+  } catch (e) {}
+}
+
+function startChallenge() {
+  ensureAudio();
+  const go = () => {
+    score = 0;
+    streak = 0;
+    mult = 1;
+    retries = 0;
+    round = 0;
+    accuracy = 0;
+    flourish = 0;
+    restartArm = -1;
+    newRound(ac.currentTime, true, true);
+  };
+  if (ac.state === "running") go();
+  else {
+    let done = false;
+    const once = () => {
+      if (!done) {
+        done = true;
+        go();
+      }
+    };
+    ac.resume().then(once, once);
+    setTimeout(once, 400);
+  }
+}
+
 function startRun() {
   ensureAudio();
 
@@ -628,6 +807,7 @@ function tap(i: number) {
     turnAt = now;
     pulseAt = now;
     clickIdx = 0;
+    taps.push({ i, dt: 0 });
     const ok = seq[0] === i;
     judged[0] = ok ? 1 : 0;
     if (ok) {
@@ -653,6 +833,8 @@ function tap(i: number) {
       k = j;
     }
   }
+  taps.push({ i, dt: now - turnAt });
+
   const win = windowFor();
   if (k < 0 || bestOff > win) {
     leap(i, 0.3);
@@ -692,7 +874,8 @@ function column(x: number) {
 // than the small friction of confirming.
 function shareRun() {
   const clean = retries === 0 ? " with no retries" : ` (${retries} retries)`;
-  const msg = `UNICORN STORM: I echoed a ${seq.length}-note phrase for ${score} points${clean}.`;
+  const url = location.origin + location.pathname + "#" + encodeRun();
+  const msg = `UNICORN STORM: I echoed a ${seq.length}-note phrase for ${score} points${clean}. Watch it: ${url}`;
   const ok = () => say(W / 2, H * 0.44, "copied!", "rgba(180,255,210,1)", 22);
   try {
     const nav = navigator as any;
@@ -720,11 +903,34 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     return;
   }
 
-  if (phase === TITLE) {
-    if (inRect(x, y, playBtn)) startRun();
-    else freePlay(column(x));
+  if (phase === COMPOSE) {
+    if (inRect(x, y, clearBtn)) {
+      seq = [];
+      offs = [];
+      compAt = -1;
+    } else if (inRect(x, y, sendBtn)) sendPattern();
+    else if (inRect(x, y, backBtn)) {
+      seq = [];
+      offs = [];
+      phase = TITLE;
+    } else composeTap(column(x));
     return;
   }
+
+  if (phase === TITLE) {
+    if (inRect(x, y, makeBtn)) {
+      enterCompose();
+      return;
+    }
+    if (inRect(x, y, playBtn)) {
+      if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
+      else if (sharedIn) startChallenge();
+      else startRun();
+    } else freePlay(column(x));
+    return;
+  }
+
+  if (phase === REPLAY) return; // let it play out
 
   if (inRect(x, y, restartBtn)) {
     pokeRestart();
@@ -742,6 +948,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     if (now < phaseAt + 0.4) return;
     if (inRect(x, y, againBtn)) newRound(now, false);
     else if (grew && inRect(x, y, nextBtn)) newRound(now, true);
+    else if (inRect(x, y, replayBtn)) startReplay(now);
     return;
   }
 
@@ -840,8 +1047,13 @@ function update(now: number) {
     }
   }
 
+  if (phase === REPLAY && now > replayEnd) {
+    phase = GRADE;
+    phaseAt = now;
+  }
+
   // Metronome runs through the call and the response, but not while waiting.
-  if (phase === CALL || phase === RESPOND) {
+  if (phase === CALL || phase === RESPOND || (phase === COMPOSE && compAt > 0)) {
     for (;;) {
       const at = pulseAt + clickIdx * BEAT;
       if (at > now + 0.12) break;
@@ -1041,6 +1253,7 @@ function frame(nowMs: number) {
   const now = ac ? ac.currentTime : 0;
 
   if (ac) update(now);
+  if (phase === COMPOSE && compAt > 0) pulseAt = compAt;
 
   // sky -- brightens with flourish, so a good run visibly lifts the world
   const lift = phase === TITLE ? 0 : flourish;
@@ -1220,15 +1433,31 @@ function frame(nowMs: number) {
     ctx.strokeStyle = `rgba(255,255,255,${0.4 + glowB * 0.35})`;
     ctx.lineWidth = 2;
     ctx.stroke();
-    text("PLAY", W / 2, playBtn.y + 41, 27, 0.95);
+    text(
+      sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS PATTERN") : "PLAY",
+      W / 2,
+      playBtn.y + 41,
+      sharedIn ? Math.min(23, W / 15) : 27,
+      0.95
+    );
+    if (sharedIn)
+      text("someone sent you this", W / 2, playBtn.y - 16, Math.min(15, W / 34), 0.45);
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
+    rrect(makeBtn.x, makeBtn.y, makeBtn.w, makeBtn.h, 22);
+    ctx.fillStyle = "rgba(255,255,255,.04)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.26)";
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    text("MAKE A PATTERN", W / 2, makeBtn.y + 28, Math.min(16, W / 26), 0.66);
+
     if (best) {
       text(
         `best ${best} notes  ·  ${bestScore} pts`,
         W / 2,
-        playBtn.y + playBtn.h + 34,
+        makeBtn.y + makeBtn.h + 30,
         Math.min(16, W / 33),
         0.5
       );
@@ -1236,7 +1465,7 @@ function frame(nowMs: number) {
         text(
           `${bestClean} notes with no retries`,
           W / 2,
-          playBtn.y + playBtn.h + 56,
+          makeBtn.y + makeBtn.h + 52,
           Math.min(14, W / 38),
           0.35
         );
@@ -1244,6 +1473,53 @@ function frame(nowMs: number) {
 
     // Demoted to small print. As a shout it out-competed the actual call to action.
     text("best with sound on — on iPad check the silent switch", W / 2, H - 20, Math.min(14, W / 38), 0.35);
+    return;
+  }
+
+  if (phase === COMPOSE) {
+    text("make a pattern", W / 2, H * 0.16, 24, 0.85);
+    text(
+      seq.length ? `${seq.length} note${seq.length > 1 ? "s" : ""} — tap the herd to add` : "tap the herd to lay down notes",
+      W / 2,
+      H * 0.16 + 28,
+      15,
+      0.45
+    );
+    text("notes snap to the nearest half beat", W / 2, H * 0.16 + 50, 13, 0.3);
+
+    // the pattern so far, spaced by time
+    if (seq.length) {
+      const beats = Math.max(1, offs[offs.length - 1]);
+      const span = Math.min(W - 96, Math.max(120, 30 * beats));
+      const x0 = W / 2 - span / 2;
+      for (let i = 0; i < seq.length; i++) {
+        ctx.beginPath();
+        ctx.arc(x0 + (offs[i] / beats) * span, H * 0.16 + 84, 6, 0, 6.284);
+        ctx.fillStyle = `hsl(${HUES[seq[i]]},80%,66%)`;
+        ctx.fill();
+      }
+    }
+
+    const on = seq.length >= 2;
+    // Notes you lay down keep flying through this row, so give the controls a bed.
+    rrect(clearBtn.x - 12, clearBtn.y - 10, backBtn.x + backBtn.w - clearBtn.x + 24, clearBtn.h + 20, 30);
+    ctx.fillStyle = "rgba(12,9,28,.66)";
+    ctx.fill();
+
+    for (const [r, label, live] of [
+      [clearBtn, "CLEAR", seq.length > 0],
+      [sendBtn, "SEND", on],
+      [backBtn, "BACK", true],
+    ] as [typeof clearBtn, string, boolean][]) {
+      rrect(r.x, r.y, r.w, r.h, 23);
+      ctx.fillStyle = live ? "rgba(255,255,255,.08)" : "rgba(255,255,255,.03)";
+      ctx.fill();
+      ctx.strokeStyle = live ? "rgba(255,255,255,.4)" : "rgba(255,255,255,.12)";
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      text(label, r.x + r.w / 2, r.y + 28, Math.min(15, r.w / 5.4), live ? 0.9 : 0.3);
+    }
+    if (!on) text("at least two notes to send", W / 2, clearBtn.y + 66, 12, 0.3);
     return;
   }
 
@@ -1325,6 +1601,10 @@ function frame(nowMs: number) {
     } else {
       text("listen", W / 2, H * 0.2, 22, 0.5);
     }
+  } else if (phase === REPLAY) {
+    const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
+    text("instant replay", W / 2, H * 0.2, 22, 0.6);
+    text(now < turnStarts ? "the phrase" : "your take", W / 2, H * 0.2 + 26, 15, 0.42);
   } else if (phase === RESPOND) {
     // "GO" punches in and fades, so the switch reads instantly.
     const since = now - goAt;
@@ -1343,7 +1623,7 @@ function frame(nowMs: number) {
     // Scrim: at high scores the celebration is bright enough to swallow the UI.
     const pw = Math.min(W - 32, 520);
     const py = H * 0.2 - 42;
-    rrect((W - pw) / 2, py, pw, nextBtn.y + nextBtn.h + 18 - py, 26);
+    rrect((W - pw) / 2, py, pw, replayBtn.y + replayBtn.h + 16 - py, 26);
     ctx.fillStyle = "rgba(12,9,28,.62)";
     ctx.fill();
 
@@ -1357,6 +1637,14 @@ function frame(nowMs: number) {
     choice(againBtn, "HEAR IT AGAIN", "same phrase", !grew);
     if (grew) choice(nextBtn, "NEXT", "one note longer", true);
     else choice(nextBtn, "NEXT", "needs 50%", false, true);
+
+    rrect(replayBtn.x, replayBtn.y, replayBtn.w, replayBtn.h, 20);
+    ctx.fillStyle = "rgba(255,255,255,.05)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.22)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    text("INSTANT REPLAY", W / 2, replayBtn.y + 25, 15, 0.62);
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
@@ -1408,5 +1696,10 @@ function frame(nowMs: number) {
 }
 
 loadBest();
+
+// A link like #40213.111.40012a... carries a whole round: the pattern, and optionally
+// the attempt. With taps it is a replay to watch; without them it is a challenge.
+if (location.hash.length > 3 && decodeRun(location.hash.slice(1))) sharedIn = true;
+
 resize();
 requestAnimationFrame(frame);
