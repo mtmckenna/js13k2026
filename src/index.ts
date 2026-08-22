@@ -216,6 +216,7 @@ const clearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const sendBtn = { x: 0, y: 0, w: 0, h: 0 };
 const backBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hearBtn = { x: 0, y: 0, w: 0, h: 0 };
+const jamBtn = { x: 0, y: 0, w: 0, h: 0 };
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -280,10 +281,12 @@ function resize() {
   againBtn.x = W / 2 - gw - 8;
   nextBtn.x = W / 2 + 8;
 
-  makeBtn.w = Math.min(230, W * 0.56);
-  makeBtn.h = 44;
-  makeBtn.x = (W - makeBtn.w) / 2;
-  makeBtn.y = playBtn.y + playBtn.h + 76;
+  const bw2 = Math.min(172, (W - 60) / 2);
+  jamBtn.w = makeBtn.w = bw2;
+  jamBtn.h = makeBtn.h = 46;
+  jamBtn.y = makeBtn.y = playBtn.y + playBtn.h + 68;
+  jamBtn.x = W / 2 - bw2 - 8;
+  makeBtn.x = W / 2 + 8;
 
   // Four across: hear it, wipe it, copy it, leave.
   const cw = Math.min(120, (W - 60) / 4);
@@ -431,6 +434,7 @@ const RESPOND = 2;
 const GRADE = 3;
 const REPLAY = 4;
 const COMPOSE = 5;
+const JAM = 6;
 
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
@@ -799,6 +803,18 @@ function freePlay(i: number) {
 // Take on a pattern somebody sent, instead of a generated one.
 let compAt = -1; // audio time of the first note laid down
 
+// Jam mode has no score to drive the spectacle, so the playing drives it instead:
+// every note stokes the weather, and it dies down when you stop.
+let jamHeat = 0;
+
+function enterJam() {
+  ensureAudio();
+  phase = JAM;
+  jamHeat = 0;
+  flourish = 0;
+  message = "";
+}
+
 function enterCompose() {
   ensureAudio();
   seq = [];
@@ -1096,6 +1112,18 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     return;
   }
 
+  if (phase === JAM) {
+    if (inRect(x, y, restartBtn)) {
+      phase = TITLE;
+      return;
+    }
+    jamHeat = Math.min(1, jamHeat + 0.13);
+    const i = column(x);
+    note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
+    leap(i, 0.35 + jamHeat * 0.75);
+    return;
+  }
+
   if (phase === COMPOSE) {
     if (inRect(x, y, hearBtn)) previewPattern(ac.currentTime);
     else if (inRect(x, y, clearBtn)) {
@@ -1115,6 +1143,10 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   if (phase === TITLE) {
     if (inRect(x, y, makeBtn)) {
       enterCompose();
+      return;
+    }
+    if (inRect(x, y, jamBtn)) {
+      enterJam();
       return;
     }
     if (inRect(x, y, playBtn)) {
@@ -1156,6 +1188,15 @@ addEventListener("keydown", (e: KeyboardEvent) => {
   if (phase === TITLE) {
     if (i >= 0) freePlay(i);
     else if (e.key === " " || e.key === "Enter") startRun();
+    else if (e.key.toLowerCase() === "j") enterJam();
+    return;
+  }
+  if (phase === JAM) {
+    if (i >= 0) {
+      jamHeat = Math.min(1, jamHeat + 0.13);
+      note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
+      leap(i, 0.35 + jamHeat * 0.75);
+    } else if (e.key === "Escape") phase = TITLE;
     return;
   }
   if (phase === GRADE) {
@@ -1525,6 +1566,11 @@ function frame(nowMs: number) {
 
   if (ac) update(now);
   if (phase === COMPOSE && compAt > 0) pulseAt = compAt;
+  if (phase === JAM) {
+    // Fades over roughly four seconds of silence.
+    jamHeat = Math.max(0, jamHeat - dt * 0.24);
+    flourish = jamHeat;
+  }
 
   // Dusk sky rather than the flat purple: deep overhead, warming toward the horizon,
   // and still dark enough that the additive ribbons and fireworks read against it.
@@ -1749,6 +1795,7 @@ function frame(nowMs: number) {
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
+    btn(jamBtn, "JAM");
     btn(makeBtn, "MAKE A PATTERN");
 
     if (best) {
@@ -1771,6 +1818,19 @@ function frame(nowMs: number) {
 
     // Demoted to small print. As a shout it out-competed the actual call to action.
     text("turn on yer sound", W / 2, H - 20, Math.min(16, W / 30), 0.42);
+    return;
+  }
+
+  if (phase === JAM) {
+    btn(restartBtn, "BACK", undefined, QUIET);
+    text("jam", W / 2, H * 0.14, 26, 0.8);
+    text("no timer, no score — just play", W / 2, H * 0.14 + 26, 15, 0.4);
+    // The storm gauge is the only readout: it IS how hard you're playing.
+    const gw = Math.min(220, W * 0.5);
+    ctx.fillStyle = "rgba(255,255,255,.1)";
+    ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw, 4);
+    ctx.fillStyle = `hsla(${45 + jamHeat * 160},90%,68%,${0.5 + jamHeat * 0.5})`;
+    ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw * jamHeat, 4);
     return;
   }
 
