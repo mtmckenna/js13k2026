@@ -114,23 +114,42 @@ const clouds: Cloud[] = [];
 
 // Lightning. Frequency and brightness both track `flourish`, so a good run turns the
 // weather up: sparse and dim when you're scraping through, near-constant at a storm.
-const bolts: { pts: number[]; age: number; life: number; power: number }[] = [];
+const bolts: { legs: number[][]; age: number; life: number; power: number }[] = [];
 let flashA = 0;
 let boltTimer = 2;
 
-function strike(power: number) {
-  const x0 = 40 + Math.random() * (W - 80);
-  const pts = [x0, -12];
-  let x = x0;
-  let y = -12;
-  const steps = 6 + ((Math.random() * 4) | 0);
-  const dy = (groundY * 0.8) / steps;
+// One jagged run from (x,y) downward. Used for the trunk and every fork.
+function jag(x: number, y: number, drop: number, steps: number, spread: number, bias: number) {
+  const pts = [x, y];
+  const dy = drop / steps;
   for (let i = 0; i < steps; i++) {
-    x += (Math.random() - 0.5) * 95;
-    y += dy * (0.7 + Math.random() * 0.6);
+    x += (Math.random() - 0.5) * spread + bias;
+    y += dy * (0.65 + Math.random() * 0.7);
     pts.push(x, y);
   }
-  bolts.push({ pts, age: 0, life: 0.3 + Math.random() * 0.22, power });
+  return pts;
+}
+
+function strike(power: number) {
+  const x0 = 40 + Math.random() * (W - 80);
+  const trunk = jag(x0, -12, groundY * 0.8, 7 + ((Math.random() * 4) | 0), 95, 0);
+  const legs = [trunk];
+
+  // Forks peel off the trunk's joints and run shorter, angled away. A single
+  // unbranched line reads as a crack, not a lightning strike.
+  const n = 2 + ((Math.random() * 3) | 0);
+  for (let f = 0; f < n; f++) {
+    const joint = 2 * (1 + ((Math.random() * (trunk.length / 2 - 2)) | 0));
+    const bx = trunk[joint];
+    const by = trunk[joint + 1];
+    const remain = groundY * 0.8 - by;
+    if (remain < 40) continue;
+    legs.push(
+      jag(bx, by, remain * (0.25 + Math.random() * 0.45), 3 + ((Math.random() * 3) | 0), 70, (Math.random() - 0.5) * 46)
+    );
+  }
+
+  bolts.push({ legs, age: 0, life: 0.3 + Math.random() * 0.22, power });
   flashA = Math.max(flashA, 0.12 + power * 0.3);
   rumble(power);
 }
@@ -150,33 +169,42 @@ function seedClouds() {
   }
 }
 
-// Angular, faceted clouds rather than puffy ones -- same language as the herd.
+// Faceted, but shaped like a cloud: a flat base with several uneven humps across the
+// top. The first attempt had one central peak and long straight flanks, which is the
+// silhouette of a mountain -- the facets were never the problem, the profile was.
 function drawCloud(c: Cloud, lift: number) {
-  const w = 150 * c.s;
-  const h = 40 * c.s;
-  const j = c.k * 0.16;
+  const w = 160 * c.s;
+  const h = 46 * c.s;
+  const j = (c.k - 0.5) * 0.22; // per-cloud lumpiness
+
+  // x, y as fractions of the box; y=0 is the flat underside.
+  const top = [
+    -0.5, 0, -0.47, -0.2, -0.36, -0.4 - j, -0.24, -0.3, -0.13, -0.56 + j, 0.0, -0.68 - j * 0.6,
+    0.13, -0.46, 0.25, -0.57 + j, 0.36, -0.34 - j, 0.47, -0.18, 0.5, 0,
+  ];
+
   ctx.save();
   ctx.translate(c.x, c.y);
-  poly([
-    -w * 0.5, h * 0.5,
-    -w * 0.42, -h * 0.1,
-    -w * 0.2, -h * (0.42 + j),
-    w * 0.02, -h * (0.62 - j),
-    w * 0.26, -h * (0.38 + j),
-    w * 0.44, -h * 0.08,
-    w * 0.5, h * 0.5,
-  ]);
-  ctx.fillStyle = `hsla(214,42%,${64 + lift * 14}%,${c.a})`;
+
+  const pts: number[] = [];
+  for (let i = 0; i < top.length; i += 2) pts.push(top[i] * w, top[i + 1] * h);
+  pts.push(w * 0.5, h * 0.3, -w * 0.5, h * 0.3); // the flat underside
+  poly(pts);
+  ctx.fillStyle = `hsla(214,40%,${64 + lift * 14}%,${c.a})`;
   ctx.fill();
-  // lit upper plane
+
+  // One lit plane across the upper humps, as if the light is above and behind.
   poly([
-    -w * 0.2, -h * (0.42 + j),
-    w * 0.02, -h * (0.62 - j),
-    w * 0.26, -h * (0.38 + j),
-    w * 0.02, -h * 0.16,
+    -0.36 * w, (-0.4 - j) * h,
+    -0.13 * w, (-0.56 + j) * h,
+    0.0, (-0.68 - j * 0.6) * h,
+    0.25 * w, (-0.57 + j) * h,
+    0.13 * w, -0.28 * h,
+    -0.18 * w, -0.18 * h,
   ]);
-  ctx.fillStyle = `hsla(206,60%,${78 + lift * 12}%,${c.a * 0.85})`;
+  ctx.fillStyle = `hsla(203,58%,${79 + lift * 12}%,${c.a * 0.6})`;
   ctx.fill();
+
   ctx.restore();
 }
 const BANDS = [0, 28, 52, 120, 200, 250, 288];
@@ -1608,15 +1636,19 @@ function frame(nowMs: number) {
     }
     // Flicker rather than a smooth fade -- lightning stutters.
     const a = (1 - b.age / b.life) * (0.55 + 0.45 * Math.sin(b.age * 90));
-    ctx.beginPath();
-    ctx.moveTo(b.pts[0], b.pts[1]);
-    for (let p = 2; p < b.pts.length; p += 2) ctx.lineTo(b.pts[p], b.pts[p + 1]);
-    ctx.strokeStyle = `rgba(150,205,255,${a * 0.3 * b.power})`;
-    ctx.lineWidth = 11 * b.power + 2;
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(255,255,255,${a * 0.9})`;
-    ctx.lineWidth = 2.4;
-    ctx.stroke();
+    for (let L = 0; L < b.legs.length; L++) {
+      const pts = b.legs[L];
+      const main = L === 0; // forks are thinner and dimmer than the trunk
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let p = 2; p < pts.length; p += 2) ctx.lineTo(pts[p], pts[p + 1]);
+      ctx.strokeStyle = `rgba(150,205,255,${a * (main ? 0.3 : 0.16) * b.power})`;
+      ctx.lineWidth = (main ? 11 : 5) * b.power + 2;
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255,255,255,${a * (main ? 0.9 : 0.55)})`;
+      ctx.lineWidth = main ? 2.4 : 1.3;
+      ctx.stroke();
+    }
   }
   ctx.globalCompositeOperation = "source-over";
 
@@ -1831,6 +1863,8 @@ function frame(nowMs: number) {
     ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw, 4);
     ctx.fillStyle = `hsla(${45 + jamHeat * 160},90%,68%,${0.5 + jamHeat * 0.5})`;
     ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw * jamHeat, 4);
+    // It was an unlabelled bar, which is no better than no bar.
+    text("storm — keep playing to build it", W / 2, H * 0.14 + 64, 12, 0.32);
     return;
   }
 
