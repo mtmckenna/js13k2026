@@ -1494,8 +1494,9 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   const dim = `hsl(${hue},64%,${50 + glow * 10}%)`;
   const pale = `hsl(${hue},76%,${74 + glow * 10}%)`;
 
-  // legs -- straight segments with a hard knee
-  ctx.strokeStyle = dim;
+  // legs -- straight segments with a hard knee. Body tone, not the shadow tone: at
+  // 3px a flat darker stroke reads as a different material rather than as shading.
+  ctx.strokeStyle = lit;
   ctx.lineWidth = 3;
   ctx.lineCap = "butt";
   ctx.lineJoin = "miter";
