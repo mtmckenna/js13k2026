@@ -112,6 +112,29 @@ interface Cloud {
 }
 const clouds: Cloud[] = [];
 
+// Lightning. Frequency and brightness both track `flourish`, so a good run turns the
+// weather up: sparse and dim when you're scraping through, near-constant at a storm.
+const bolts: { pts: number[]; age: number; life: number; power: number }[] = [];
+let flashA = 0;
+let boltTimer = 2;
+
+function strike(power: number) {
+  const x0 = 40 + Math.random() * (W - 80);
+  const pts = [x0, -12];
+  let x = x0;
+  let y = -12;
+  const steps = 6 + ((Math.random() * 4) | 0);
+  const dy = (groundY * 0.8) / steps;
+  for (let i = 0; i < steps; i++) {
+    x += (Math.random() - 0.5) * 95;
+    y += dy * (0.7 + Math.random() * 0.6);
+    pts.push(x, y);
+  }
+  bolts.push({ pts, age: 0, life: 0.3 + Math.random() * 0.22, power });
+  flashA = Math.max(flashA, 0.12 + power * 0.3);
+  rumble(power);
+}
+
 function seedClouds() {
   clouds.length = 0;
   for (let i = 0; i < 15; i++) {
@@ -360,6 +383,31 @@ function chime(a: number, b: number, vol: number) {
   }
 }
 
+// Thunder: filtered noise, deliberately quiet and delayed a beat behind the flash so
+// it sits under the music instead of competing with it.
+let noiseBuf: AudioBuffer;
+function rumble(power: number) {
+  if (!ac || ac.state !== "running") return;
+  if (!noiseBuf) {
+    noiseBuf = ac.createBuffer(1, (ac.sampleRate * 0.8) | 0, ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const src = ac.createBufferSource();
+  src.buffer = noiseBuf;
+  const lp = ac.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 190 + power * 200;
+  const g = ac.createGain();
+  const t = ac.currentTime + 0.08 + Math.random() * 0.25;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.055 * power, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0004, t + 0.75);
+  src.connect(lp).connect(g).connect(ac.destination);
+  src.start(t);
+  src.stop(t + 0.85);
+}
+
 function ping(freq: number, vol: number) {
   const t = ac.currentTime;
   const gain = ac.createGain();
@@ -593,6 +641,7 @@ function celebrate(a: number, now: number) {
 
   if (a >= 0.95) {
     // The storm. Rainbows, fireworks, and unicorns erupting the length of the field.
+    strike(1);
     for (let i = 0; i < 3; i++) rainbow(W * (0.18 + 0.32 * i), groundY, W * (0.3 + 0.11 * i), 2.8);
 
     for (let i = 0; i < 5; i++) {
@@ -1493,6 +1542,38 @@ function frame(nowMs: number) {
     drawCloud(c, lift);
   }
 
+  // Storm cadence: ~3-8s apart when you're struggling, ~1-2.5s at full flourish.
+  const weather = phase === TITLE ? 0.12 : flourish;
+  boltTimer -= dt;
+  if (boltTimer <= 0) {
+    strike(0.2 + weather * 0.8);
+    boltTimer = (5.5 - weather * 3.8) * (0.55 + Math.random() * 0.9);
+  }
+
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    const b = bolts[i];
+    b.age += dt;
+    if (b.age > b.life) {
+      bolts.splice(i, 1);
+      continue;
+    }
+    // Flicker rather than a smooth fade -- lightning stutters.
+    const a = (1 - b.age / b.life) * (0.55 + 0.45 * Math.sin(b.age * 90));
+    ctx.beginPath();
+    ctx.moveTo(b.pts[0], b.pts[1]);
+    for (let p = 2; p < b.pts.length; p += 2) ctx.lineTo(b.pts[p], b.pts[p + 1]);
+    ctx.strokeStyle = `rgba(150,205,255,${a * 0.3 * b.power})`;
+    ctx.lineWidth = 11 * b.power + 2;
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255,255,255,${a * 0.9})`;
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = "source-over";
+
   // Rainbows sit behind the whole scene: sky first, arcs, then everything else.
   for (let i = bows.length - 1; i >= 0; i--) {
     const b = bows[i];
@@ -1643,6 +1724,12 @@ function frame(nowMs: number) {
   ctx.fillRect(0, groundY + 16, W, 2);
 
   for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait);
+
+  if (flashA > 0.002) {
+    ctx.fillStyle = `rgba(196,224,255,${flashA * 0.45})`;
+    ctx.fillRect(0, 0, W, H);
+    flashA -= dt * 2.6;
+  }
 
   for (const u of herd) {
     u.lit = Math.max(0, u.lit - dt * 1.6);
