@@ -80,7 +80,6 @@ interface Flyer {
   holding: boolean;
   hue: number;
   gait: number;
-  boost: number; // seconds of held lift remaining
   idx: number; // which unicorn -- so a collision can sound their two notes
   glow: number;
   hot: boolean; // launched by a correct note -- only these can score a collision bonus
@@ -880,7 +879,6 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
     glow: 0.3 + power * 0.7,
     hot: !!hot,
-    boost: 0,
     ribbon,
   };
   flyers.push(f);
@@ -1374,7 +1372,6 @@ function overHerd(y: number) {
 const slideCol = new Map<number, number>();
 // What each finger (or key) is currently holding aloft.
 const heldBy = new Map<string | number, Flyer>();
-const HOLD = 0.34; // seconds of lift available, so it can't be held forever
 
 // Which slot each press claimed, so its release can be judged on height.
 const claimed = new Map<string | number, { k: number; at: number }>();
@@ -1387,22 +1384,20 @@ function grab(id: string | number) {
     lastClaimK = -1;
   }
   if (!lastLaunched || !heightsLive()) return;
-  if (hardcore) {
-    // Armed, not lifted: nothing happens unless the hold survives to HOLD_HIGH.
-    lastLaunched.armAt = ac.currentTime + HOLD_HIGH;
-    lastLaunched.holding = true;
-  } else {
-    lastLaunched.boost = HOLD; // jam and compose stay expressive
-  }
+  // A new press from the same pointer means the previous one is over, even if its
+  // release never arrived. Without this, a dropped or reordered pointerup leaves the
+  // old note armed and disarms the new one -- heights come out swapped.
+  const prev = heldBy.get(id);
+  if (prev) prev.holding = false;
+  // Armed, not lifted: nothing happens unless the hold survives to HOLD_HIGH.
+  lastLaunched.armAt = ac.currentTime + HOLD_HIGH;
+  lastLaunched.holding = true;
   heldBy.set(id, lastLaunched);
 }
 
 function release(id: string | number) {
   const f = heldBy.get(id);
-  if (f) {
-    f.boost = 0;
-    f.holding = false; // let go before HOLD_HIGH and it stays a low hop
-  }
+  if (f) f.holding = false; // let go before HOLD_HIGH and it stays a low hop
   heldBy.delete(id);
 
   const c = claimed.get(id);
@@ -2139,17 +2134,10 @@ function frame(nowMs: number) {
         const v = Math.sqrt(2 * f.g * rise);
         if (v > -f.vy) f.vy = -v;
       }
+      f.glow = Math.min(1, f.glow + 0.4); // the surge should be felt as well as seen
     }
 
-    // Held notes climb further: quarter gravity while rising and still held. The note
-    // already sounded on press, so timing is untouched -- this only shapes the arc.
-    if (f.boost > 0 && f.vy < 0) {
-      f.vy += f.g * 0.25 * dt;
-      f.boost -= dt;
-      f.glow = Math.min(1, f.glow + dt * 1.6);
-    } else {
-      f.vy += f.g * dt;
-    }
+    f.vy += f.g * dt;
     f.x += f.vx * dt;
     f.y += f.vy * dt;
 
@@ -2369,7 +2357,7 @@ function frame(nowMs: number) {
     } else if (shareUrl) drawCopy(now);
     else showLink(false);
     text("jam", W / 2, H * 0.14, 26, 0.8);
-    text("no timer, no score — hold a unicorn to send it higher", W / 2, H * 0.14 + 26, 15, 0.4);
+    text("no timer, no score — tap for a hop, hold for a leap", W / 2, H * 0.14 + 26, 15, 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
     const gw = Math.min(220, W * 0.5);
     ctx.fillStyle = "rgba(255,255,255,.1)";
