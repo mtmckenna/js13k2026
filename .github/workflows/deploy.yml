@@ -1,0 +1,48 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; the newest push wins.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # `build` emits dist/main.js + dist/index.html; `compress` Roadroller-packs the
+      # JS and inlines it, leaving index.html self-contained.
+      - run: npm run build
+      - run: npm run compress
+      # Ship only that one file. main.js is already inlined into it, and report.html
+      # is a ~275kB bundle-analyser dump nobody should be downloading.
+      - run: mkdir -p _site && cp dist/index.html _site/index.html
+      - run: echo "deploying $(wc -c < _site/index.html) bytes"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
