@@ -56,6 +56,7 @@ interface Unicorn {
   homeX: number;
   hue: number;
   voice: string;
+  gait: number; // where in the stride this one stands
   bob: number;
   lit: number; // fades after being played, so the eye can follow the call
 }
@@ -67,6 +68,7 @@ interface Flyer {
   vx: number;
   vy: number;
   hue: number;
+  gait: number;
   idx: number; // which unicorn -- so a collision can sound their two notes
   glow: number;
   hot: boolean; // launched by a correct note -- only these can score a collision bonus
@@ -75,7 +77,8 @@ interface Flyer {
 
 const herd: Unicorn[] = [];
 for (let i = 0; i < COUNT; i++) {
-  herd.push({ homeX: 0, hue: HUES[i], voice: VOICES[i], bob: Math.random() * 6.28, lit: 0 });
+  // Spread across the cycle by golden-ish steps so no two look alike or line up.
+  herd.push({ homeX: 0, hue: HUES[i], voice: VOICES[i], gait: i * 2.4, bob: Math.random() * 6.28, lit: 0 });
 }
 
 const flyers: Flyer[] = [];
@@ -608,6 +611,8 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     vx: (dir * reach) / flight,
     vy: -vy,
     hue,
+    // Airborne copies keep a stride too, and a random one for crowd extras.
+    gait: idx === undefined ? Math.random() * 6.28 : herd[idx].gait,
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
     glow: 0.3 + power * 0.7,
     hot: !!hot,
@@ -1047,11 +1052,11 @@ function update(now: number) {
       goAt = now;
     }
   } else if (phase === RESPOND) {
-    // If they never tapped, end the turn after a generous wait rather than hanging.
-    const endAt =
-      turnAt < 0
-        ? respondStart() + (phraseBeats() + 4) * BEAT
-        : turnAt + phraseBeats() * BEAT + windowFor();
+    // Wait indefinitely for the first note. Timing out a player who simply hasn't
+    // started yet grades a round they never attempted, and there's nothing to gain
+    // by cutting them off -- the clock doesn't begin until they tap anyway. The
+    // metronome keeps running so the tempo is alive whenever they do start.
+    const endAt = turnAt < 0 ? Infinity : turnAt + phraseBeats() * BEAT + windowFor();
     if (now > endAt) {
       let sum = 0;
       for (let i = 0; i < seq.length; i++) {
@@ -1108,7 +1113,7 @@ function poly(p: number[]) {
   ctx.closePath();
 }
 
-function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, glow: number) {
+function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, glow: number, gait: number) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.atan2(vy, vx));
@@ -1139,12 +1144,20 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.lineWidth = 3;
   ctx.lineCap = "butt";
   ctx.lineJoin = "miter";
+  // Each leg sits a quarter-cycle behind the one before it, and every unicorn carries
+  // its own phase, so the five read as one herd caught mid-stride rather than five
+  // copies of the same drawing.
   const legs = [7, 4, 3, 5, -9, 4, -5, 5];
-  for (let i = 0; i < 8; i += 2) {
+  for (let j = 0; j < 4; j++) {
+    const hx = legs[j * 2];
+    const hy = legs[j * 2 + 1];
+    const a = gait + j * 1.7;
+    const swing = Math.sin(a) * 5.5; // hoof travels fore and aft
+    const lift = Math.max(0, Math.cos(a)) * 3.2; // and picks up on the forward reach
     ctx.beginPath();
-    ctx.moveTo(legs[i], legs[i + 1]);
-    ctx.lineTo(legs[i] + 1.5, legs[i + 1] + 7);
-    ctx.lineTo(legs[i] - 1.5, legs[i + 1] + 12);
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx + swing * 0.4 + 1.4, hy + 7 - lift * 0.45);
+    ctx.lineTo(hx + swing, hy + 12 - lift);
     ctx.stroke();
   }
 
@@ -1152,11 +1165,12 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.strokeStyle = pale;
   ctx.lineWidth = 2.6;
   ctx.beginPath();
+  const sway = Math.sin(gait) * 2.2;
   ctx.moveTo(-13, -2);
-  ctx.lineTo(-19, -7);
-  ctx.lineTo(-23, -1);
-  ctx.lineTo(-20, 4);
-  ctx.lineTo(-25, 8);
+  ctx.lineTo(-19, -7 + sway);
+  ctx.lineTo(-23, -1 - sway);
+  ctx.lineTo(-20, 4 + sway);
+  ctx.lineTo(-25, 8 - sway * 0.5);
   ctx.stroke();
 
   poly([-14, 0, -9, -8, 1, -9, 9, -5, 10, 4, -2, 6, -11, 5]); // barrel
@@ -1448,12 +1462,12 @@ function frame(nowMs: number) {
     ctx.fillRect(0, groundY + 16, W, 2);
   }
 
-  for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow);
+  for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait);
 
   for (const u of herd) {
     u.lit = Math.max(0, u.lit - dt * 1.6);
     u.bob += dt * 2.2;
-    drawUnicorn(u.homeX, groundY - 14 - Math.abs(Math.sin(u.bob)) * 3, u.hue, 1, 0, u.lit);
+    drawUnicorn(u.homeX, groundY - 14 - Math.abs(Math.sin(u.bob)) * 3, u.hue, 1, 0, u.lit, u.gait);
   }
 
   // --- hud ---
