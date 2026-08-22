@@ -1490,8 +1490,9 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   // Angular, faceted build: flat planes and hard corners instead of ellipses. Two
   // tones per mass -- a lit plane and a shadowed one -- so the silhouette reads as
   // folded panels rather than a blob.
+  // One flat tone for the entire body -- barrel, belly, neck, head, ear and legs.
+  // Mane, tail, horn and eye stay as accents; everything else is a single silhouette.
   const lit = `hsl(${hue},72%,${66 + glow * 12}%)`;
-  const dim = `hsl(${hue},64%,${50 + glow * 10}%)`;
   const pale = `hsl(${hue},76%,${74 + glow * 10}%)`;
 
   // legs -- straight segments with a hard knee. Body tone, not the shadow tone: at
@@ -1529,23 +1530,15 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.lineTo(-25, 8 - sway * 0.5);
   ctx.stroke();
 
+  ctx.fillStyle = lit;
   poly([-14, 0, -9, -8, 1, -9, 9, -5, 10, 4, -2, 6, -11, 5]); // barrel
-  ctx.fillStyle = lit;
   ctx.fill();
-  poly([-11, 5, -2, 6, 10, 4, 9, 0, -6, 2]); // underside facet
-  ctx.fillStyle = dim;
-  ctx.fill();
-
   poly([4, -7, 10, -18, 15, -17, 9, -4]); // neck
-  ctx.fillStyle = lit;
   ctx.fill();
-
   poly([10, -18, 22, -15, 17, -8, 9, -11]); // wedge head
-  ctx.fillStyle = pale;
   ctx.fill();
-
-  poly([10.2, -16.6, 9.2, -24.5, 13.6, -15.8]); // ear, rooted on the skull line
-  ctx.fillStyle = dim;
+  // The ear still reads because its tip clears the skull line against the sky.
+  poly([10.2, -16.6, 9.2, -24.5, 13.6, -15.8]);
   ctx.fill();
 
   // Horn base straddles the skull line and sits just inside it, so it grows out of
