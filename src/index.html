@@ -22,6 +22,13 @@
         overscroll-behavior: none;
         touch-action: none;
         background: #141033;
+        /* The double-tap callout ("Copy / Select") comes from the DOCUMENT being
+           selectable. Setting this on the canvas alone left html/body selectable,
+           so a double tap still grabbed the page. */
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
       }
 
       canvas {

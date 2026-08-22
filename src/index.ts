@@ -253,7 +253,7 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
 
 // iOS ignores user-scalable=no, so double-tap and pinch still zoom and pan the page.
 // These are the events that actually carry it.
-for (const ev of ["gesturestart", "gesturechange", "gestureend", "dblclick"]) {
+for (const ev of ["gesturestart", "gesturechange", "gestureend", "dblclick", "contextmenu", "selectstart"]) {
   addEventListener(ev, (e) => e.preventDefault(), { passive: false });
 }
 
@@ -907,11 +907,15 @@ function legacyCopy(url: string) {
   try {
     const ta = document.createElement("textarea");
     ta.value = url;
-    ta.style.cssText = "position:fixed;top:-99px;opacity:0";
+    ta.readOnly = true;
+    ta.style.cssText = "position:fixed;top:-99px;opacity:0;-webkit-user-select:text";
     document.body.appendChild(ta);
     ta.select();
+    ta.setSelectionRange(0, url.length);
     const ok = document.execCommand("copy");
     document.body.removeChild(ta);
+    const sel = getSelection();
+    if (sel) sel.removeAllRanges(); // don't leave a selection for iOS to decorate
     return ok;
   } catch (e) {
     return false;
@@ -1112,6 +1116,30 @@ function tap(i: number) {
   leap(i, right ? 0.35 + flourish : 0.2, right && timing > 0.3);
 }
 
+// One place that decides what a note in column `col` means, so a slide behaves
+// exactly like a tap in every mode.
+function jamNote(i: number) {
+  jamHeat = Math.min(1, jamHeat + 0.13);
+  note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
+  leap(i, 0.35 + jamHeat * 0.75);
+}
+
+function hitNote(col: number) {
+  if (phase === TITLE) freePlay(col);
+  else if (phase === JAM) jamNote(col);
+  else if (phase === COMPOSE) composeTap(col);
+  else if (phase === RESPOND || phase === GRADE) tap(col);
+}
+
+// Sliding fires only down where the herd actually stands -- otherwise dragging
+// across the buttons would set off notes.
+function overHerd(y: number) {
+  return y > groundY - 118;
+}
+
+// Last column each finger was over. Multi-touch: two fingers can run the herd at once.
+const slideCol = new Map<number, number>();
+
 function column(x: number) {
   return Math.min(COUNT - 1, Math.max(0, Math.round(x / slot) - 1));
 }
@@ -1145,10 +1173,9 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       phase = TITLE;
       return;
     }
-    jamHeat = Math.min(1, jamHeat + 0.13);
-    const i = column(x);
-    note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
-    leap(i, 0.35 + jamHeat * 0.75);
+    slideCol.set(e.pointerId, column(x));
+    canvas.setPointerCapture(e.pointerId);
+    jamNote(column(x));
     return;
   }
 
@@ -1164,8 +1191,17 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       seq = [];
       offs = [];
       phase = TITLE;
-    } else composeTap(column(x));
+    } else {
+      slideCol.set(e.pointerId, column(x));
+      canvas.setPointerCapture(e.pointerId);
+      composeTap(column(x));
+    }
     return;
+  }
+
+  if (phase === TITLE && overHerd(y)) {
+    slideCol.set(e.pointerId, column(x));
+    canvas.setPointerCapture(e.pointerId);
   }
 
   if (phase === TITLE) {
@@ -1208,8 +1244,27 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     return;
   }
 
+  if (overHerd(y)) {
+    slideCol.set(e.pointerId, column(x));
+    canvas.setPointerCapture(e.pointerId);
+  }
   tap(column(x));
 });
+
+// Drag across the herd to run notes off like a glissando. Each unicorn fires once as
+// the finger crosses into its column, and again only if you leave and come back.
+canvas.addEventListener("pointermove", (e: PointerEvent) => {
+  if (!slideCol.has(e.pointerId)) return;
+  if (!overHerd(e.clientY)) return;
+  const c = column(e.clientX);
+  if (c === slideCol.get(e.pointerId)) return;
+  slideCol.set(e.pointerId, c);
+  hitNote(c);
+});
+
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
+  canvas.addEventListener(ev, (e: any) => slideCol.delete(e.pointerId));
+}
 
 addEventListener("keydown", (e: KeyboardEvent) => {
   const i = "12345".indexOf(e.key);
@@ -1818,7 +1873,7 @@ function frame(nowMs: number) {
   // --- hud ---
   if (phase === TITLE) {
     fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
-    text("the herd plays a phrase. play it back.", W / 2, H * 0.24 + 42, Math.min(19, W / 26), 0.55);
+    text("Simon says — repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
 
     // One obvious target. It breathes so it reads as the live thing on screen.
     btn(playBtn, sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS") : "PLAY", undefined, GOLD);

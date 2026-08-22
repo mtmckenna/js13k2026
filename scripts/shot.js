@@ -19,6 +19,7 @@
 //   --wait <ms>      settle before input     (default 500)
 //   --keys <spec>    comma-separated holds; "+" chords them. e.g. ArrowRight:500
 //   --click <spec>   ";"-separated taps: "450,420;150,500" -- add "@400" to wait after
+//   --drag <spec>    ";"-separated swipes: "120,505>790,505" -- runs after clicks
 //   --settle <ms>    settle after input      (default 300)
 //   --timeout <ms>   overall bail-out        (default 30000)
 //
@@ -157,13 +158,30 @@ try {
 		await sleep(int(hold, 260));
 	}
 
-	if (argv.keys || argv.click) await sleep(SETTLE);
+	// Drags: press, glide through N steps, release. Needed to exercise slide input.
+	for (const step of String(argv.drag ?? "").split(";").filter(Boolean)) {
+		const [path, hold] = step.split("@");
+		const [from, to] = path.split(">");
+		const [ax, ay] = from.split(",").map(Number);
+		const [bx, by] = to.split(",").map(Number);
+		const steps = 24;
+		await send("Input.dispatchMouseEvent", { type: "mousePressed", x: ax, y: ay, button: "left", clickCount: 1, buttons: 1 });
+		for (let i = 1; i <= steps; i++) {
+			const t = i / steps;
+			await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: ax + (bx - ax) * t, y: ay + (by - ay) * t, button: "left", buttons: 1 });
+			await sleep(18);
+		}
+		await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: bx, y: by, button: "left", clickCount: 1, buttons: 0 });
+		await sleep(int(hold, 200));
+	}
+
+	if (argv.keys || argv.click || argv.drag) await sleep(SETTLE);
 
 	const { data } = await send("Page.captureScreenshot", { format: "png" });
 	mkdirSync(path.dirname(path.resolve(OUT)), { recursive: true });
 	writeFileSync(OUT, Buffer.from(data, "base64"));
 
-	console.log(`shot: ${OUT} (${W}x${H}) <- ${URL_}${argv.keys ? ` keys=${argv.keys}` : ""}${argv.click ? ` click=${argv.click}` : ""}`);
+	console.log(`shot: ${OUT} (${W}x${H}) <- ${URL_}${argv.keys ? ` keys=${argv.keys}` : ""}${argv.click ? ` click=${argv.click}` : ""}${argv.drag ? ` drag=${argv.drag}` : ""}`);
 	if (logs.length) {
 		console.log("--- page output ---");
 		for (const l of logs) console.log(l);
