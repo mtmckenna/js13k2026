@@ -69,6 +69,7 @@ interface Flyer {
   vy: number;
   hue: number;
   gait: number;
+  boost: number; // seconds of held lift remaining
   idx: number; // which unicorn -- so a collision can sound their two notes
   glow: number;
   hot: boolean; // launched by a correct note -- only these can score a collision bonus
@@ -245,6 +246,7 @@ const sendBtn = { x: 0, y: 0, w: 0, h: 0 };
 const backBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const jamBtn = { x: 0, y: 0, w: 0, h: 0 };
+const beatBtn = { x: 0, y: 0, w: 0, h: 0 };
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -293,6 +295,11 @@ function resize() {
   restartBtn.h = 34;
   restartBtn.x = 12;
   restartBtn.y = 12 + topPad;
+
+  beatBtn.w = 92;
+  beatBtn.h = 30;
+  beatBtn.x = 12;
+  beatBtn.y = restartBtn.y + restartBtn.h + 8;
 
   shareBtn.w = 82;
   shareBtn.h = 34;
@@ -495,6 +502,13 @@ let round = 0;
 let best = 0; // longest phrase reached
 let bestScore = 0;
 let bestClean = 0; // longest phrase reached without a single retry
+// The metronome click and the ground flash are the same idea in two senses, so they
+// are one switch rather than two.
+let beatOn = true;
+// In jam and compose the pulse waits for you: your first note IS beat one, the same
+// way the response clock anchors to your first tap. (The scored countdown still
+// clicks, because there the point is to hand you a tempo before the herd plays.)
+let freeBeat = false;
 let streak = 0; // rounds advanced in a row without retrying
 let mult = 1;
 let retries = 0;
@@ -505,6 +519,7 @@ function loadBest() {
     best = +localStorage.us_l || 0;
     bestScore = +localStorage.us_s || 0;
     bestClean = +localStorage.us_c || 0;
+    beatOn = localStorage.us_b !== "0";
   } catch (e) {}
 }
 function saveBest() {
@@ -512,6 +527,7 @@ function saveBest() {
     localStorage.us_l = best;
     localStorage.us_s = bestScore;
     localStorage.us_c = bestClean;
+    localStorage.us_b = beatOn ? "1" : "0";
   } catch (e) {}
 }
 
@@ -739,6 +755,9 @@ function respondStart() {
 
 // Exaggeration is the reward: arcs swell with `power`, which tracks how well the
 // player is doing right now.
+// The most recent flyer, so a press can keep hold of what it just launched.
+let lastLaunched: Flyer = null;
+
 function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
   const peak = H * (0.2 + power * 0.34);
   const vy = Math.sqrt(2 * G * peak);
@@ -748,7 +767,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
 
   const ribbon = { hue, pts: [], age: 0, fat: 0.6 + power };
   ribbons.push(ribbon);
-  flyers.push({
+  const f: Flyer = {
     x,
     y: groundY - 6,
     vx: (dir * reach) / flight,
@@ -759,8 +778,12 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
     glow: 0.3 + power * 0.7,
     hot: !!hot,
+    boost: 0,
     ribbon,
-  });
+  };
+  flyers.push(f);
+  lastLaunched = f;
+  return f;
 }
 
 function leap(i: number, power: number, hot?: boolean) {
@@ -841,6 +864,7 @@ function enterJam() {
   jamHeat = 0;
   flourish = 0;
   message = "";
+  freeBeat = false;
 }
 
 function enterCompose() {
@@ -849,11 +873,10 @@ function enterCompose() {
   offs = [];
   taps = [];
   compAt = -1;
+  patternDone = false;
+  freeBeat = false;
   phase = COMPOSE;
   phaseAt = ac.currentTime;
-  // Click straight away: you need the beat before the first note, not after it.
-  pulseAt = ac.currentTime;
-  clickIdx = 0;
   message = "";
 }
 
@@ -867,6 +890,7 @@ function composeTap(i: number) {
     compAt = now;
     pulseAt = now;
     clickIdx = 0;
+    freeBeat = true;
     offs.push(0);
   } else {
     let o = Math.round((now - compAt) / (BEAT * 0.5)) * 0.5;
@@ -939,11 +963,17 @@ function previewPattern(now: number) {
   // Re-anchor the click to the playback so the pattern lands on the pulse.
   pulseAt = t0;
   clickIdx = 0;
+  freeBeat = true;
 }
 
-function sendPattern() {
+let patternDone = false;
+
+// DONE closes the pattern off and hands you the link in one move. There was no way to
+// say "that's the whole thing", and copying was a separate step you had to know to take.
+function finishPattern() {
   if (seq.length < 2) return;
   taps = []; // a pattern is the challenge, not a performance
+  patternDone = true;
   copyLink(runUrl(), H * 0.5);
 }
 
@@ -1119,6 +1149,11 @@ function tap(i: number) {
 // One place that decides what a note in column `col` means, so a slide behaves
 // exactly like a tap in every mode.
 function jamNote(i: number) {
+  if (!freeBeat) {
+    freeBeat = true;
+    pulseAt = ac.currentTime;
+    clickIdx = 0;
+  }
   jamHeat = Math.min(1, jamHeat + 0.13);
   note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
   leap(i, 0.35 + jamHeat * 0.75);
@@ -1139,6 +1174,21 @@ function overHerd(y: number) {
 
 // Last column each finger was over. Multi-touch: two fingers can run the herd at once.
 const slideCol = new Map<number, number>();
+// What each finger (or key) is currently holding aloft.
+const heldBy = new Map<string | number, Flyer>();
+const HOLD = 0.34; // seconds of lift available, so it can't be held forever
+
+function grab(id: string | number) {
+  if (!lastLaunched) return;
+  lastLaunched.boost = HOLD;
+  heldBy.set(id, lastLaunched);
+}
+
+function release(id: string | number) {
+  const f = heldBy.get(id);
+  if (f) f.boost = 0;
+  heldBy.delete(id);
+}
 
 function column(x: number) {
   return Math.min(COUNT - 1, Math.max(0, Math.round(x / slot) - 1));
@@ -1168,6 +1218,12 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     return;
   }
 
+  if (inRect(x, y, beatBtn) && phase !== TITLE && phase !== REPLAY) {
+    beatOn = !beatOn;
+    saveBest();
+    return;
+  }
+
   if (phase === JAM) {
     if (inRect(x, y, restartBtn)) {
       phase = TITLE;
@@ -1176,6 +1232,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     slideCol.set(e.pointerId, column(x));
     canvas.setPointerCapture(e.pointerId);
     jamNote(column(x));
+    grab(e.pointerId);
     return;
   }
 
@@ -1185,8 +1242,9 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       seq = [];
       offs = [];
       compAt = -1;
+      patternDone = false;
       pending.length = 0;
-    } else if (inRect(x, y, sendBtn)) sendPattern();
+    } else if (inRect(x, y, sendBtn)) finishPattern();
     else if (inRect(x, y, backBtn)) {
       seq = [];
       offs = [];
@@ -1194,7 +1252,9 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     } else {
       slideCol.set(e.pointerId, column(x));
       canvas.setPointerCapture(e.pointerId);
+      patternDone = false; // adding a note reopens it
       composeTap(column(x));
+      grab(e.pointerId);
     }
     return;
   }
@@ -1213,11 +1273,16 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       enterJam();
       return;
     }
+    if (overHerd(y) && !inRect(x, y, playBtn) && !inRect(x, y, makeBtn) && !inRect(x, y, jamBtn)) {
+      freePlay(column(x));
+      grab(e.pointerId);
+      return;
+    }
     if (inRect(x, y, playBtn)) {
       if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
       else if (sharedIn) startChallenge();
       else startRun();
-    } else freePlay(column(x));
+    }
     return;
   }
 
@@ -1249,6 +1314,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     canvas.setPointerCapture(e.pointerId);
   }
   tap(column(x));
+  grab(e.pointerId);
 });
 
 // Drag across the herd to run notes off like a glissando. Each unicorn fires once as
@@ -1260,13 +1326,20 @@ canvas.addEventListener("pointermove", (e: PointerEvent) => {
   if (c === slideCol.get(e.pointerId)) return;
   slideCol.set(e.pointerId, c);
   hitNote(c);
+  grab(e.pointerId); // the new one becomes what this finger is holding
 });
 
 for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
-  canvas.addEventListener(ev, (e: any) => slideCol.delete(e.pointerId));
+  canvas.addEventListener(ev, (e: any) => {
+    slideCol.delete(e.pointerId);
+    release(e.pointerId);
+  });
 }
 
+addEventListener("keyup", (e: KeyboardEvent) => release(e.key));
+
 addEventListener("keydown", (e: KeyboardEvent) => {
+  if (e.repeat) return;
   const i = "12345".indexOf(e.key);
   if (phase === TITLE) {
     if (i >= 0) freePlay(i);
@@ -1276,9 +1349,8 @@ addEventListener("keydown", (e: KeyboardEvent) => {
   }
   if (phase === JAM) {
     if (i >= 0) {
-      jamHeat = Math.min(1, jamHeat + 0.13);
-      note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
-      leap(i, 0.35 + jamHeat * 0.75);
+      jamNote(i);
+      grab(e.key);
     } else if (e.key === "Escape") phase = TITLE;
     return;
   }
@@ -1290,8 +1362,10 @@ addEventListener("keydown", (e: KeyboardEvent) => {
     else if (e.key.toLowerCase() === "r") pokeRestart();
     return;
   }
-  if (i >= 0) tap(i);
-  else if (e.key.toLowerCase() === "r") pokeRestart();
+  if (i >= 0) {
+    tap(i);
+    grab(e.key);
+  } else if (e.key.toLowerCase() === "r") pokeRestart();
 });
 
 // --- phase machine -------------------------------------------------------
@@ -1372,8 +1446,10 @@ function update(now: number) {
     phaseAt = now;
   }
 
-  // Metronome runs through the call and the response, but not while waiting.
-  if (phase === CALL || phase === RESPOND || phase === COMPOSE) {
+  // Runs wherever there's playing to do -- not while a round-end screen waits on you.
+  const beatLive =
+    phase === CALL || phase === RESPOND ? true : (phase === COMPOSE || phase === JAM) && freeBeat;
+  if (beatOn && beatLive) {
     for (;;) {
       const at = pulseAt + clickIdx * BEAT;
       if (at > now + 0.12) break;
@@ -1729,7 +1805,15 @@ function frame(nowMs: number) {
   // --- flyers ---
   for (let i = flyers.length - 1; i >= 0; i--) {
     const f = flyers[i];
-    f.vy += G * dt;
+    // Held notes climb further: quarter gravity while rising and still held. The note
+    // already sounded on press, so timing is untouched -- this only shapes the arc.
+    if (f.boost > 0 && f.vy < 0) {
+      f.vy += G * 0.25 * dt;
+      f.boost -= dt;
+      f.glow = Math.min(1, f.glow + dt * 1.6);
+    } else {
+      f.vy += G * dt;
+    }
     f.x += f.vx * dt;
     f.y += f.vy * dt;
 
@@ -1845,7 +1929,9 @@ function frame(nowMs: number) {
   // Ground brightens on every beat -- a visible pulse to play against, so the
   // rhythm isn't carried by the click alone.
   let pulse = 0;
-  if (ac && (phase === CALL || phase === RESPOND)) {
+  const pulseLive =
+    phase === CALL || phase === RESPOND ? true : (phase === COMPOSE || phase === JAM) && freeBeat;
+  if (ac && beatOn && pulseLive) {
     const ph = ((now - pulseAt) / BEAT) % 1;
     pulse = Math.max(0, 1 - (ph < 0 ? ph + 1 : ph) * 3);
   }
@@ -1910,8 +1996,9 @@ function frame(nowMs: number) {
 
   if (phase === JAM) {
     btn(restartBtn, "BACK", undefined, QUIET);
+    btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     text("jam", W / 2, H * 0.14, 26, 0.8);
-    text("no timer, no score — just play", W / 2, H * 0.14 + 26, 15, 0.4);
+    text("no timer, no score — hold a unicorn to send it higher", W / 2, H * 0.14 + 26, 15, 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
     const gw = Math.min(220, W * 0.5);
     ctx.fillStyle = "rgba(255,255,255,.1)";
@@ -1956,12 +2043,17 @@ function frame(nowMs: number) {
     for (const [r, label, live] of [
       [hearBtn, "HEAR", seq.length > 0],
       [clearBtn, "CLEAR", seq.length > 0],
-      [sendBtn, "COPY LINK", on],
+      [sendBtn, "DONE", on],
       [backBtn, "BACK", true],
     ] as [typeof clearBtn, string, boolean][]) {
-      btn(r, label, undefined, live ? (label === "COPY LINK" ? GOLD : PLAIN) : LOCKED);
+      btn(r, label, undefined, live ? (label === "DONE" ? GOLD : PLAIN) : LOCKED);
     }
-    if (!on) text("at least two notes to send", W / 2, hearBtn.y + 66, 12, 0.3);
+    const hintY = hearBtn.y + 82;
+    if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
+    else if (patternDone) text("link copied — send it to someone", W / 2, hintY, 13, 0.6);
+    else text("DONE finishes it and copies the link", W / 2, hintY, 12, 0.34);
+
+    btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     return;
   }
 
@@ -2091,6 +2183,7 @@ function frame(nowMs: number) {
   {
     const armed = restartArm > 0 && now < restartArm;
     btn(restartBtn, armed ? "SURE?" : "RESTART", undefined, armed ? GOLD : QUIET);
+    btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     btn(shareBtn, "COPY", undefined, QUIET);
   }
 

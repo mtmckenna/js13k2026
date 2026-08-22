@@ -18,7 +18,7 @@
 //   --size <WxH>     viewport                (default 800x600)
 //   --wait <ms>      settle before input     (default 500)
 //   --keys <spec>    comma-separated holds; "+" chords them. e.g. ArrowRight:500
-//   --click <spec>   ";"-separated taps: "450,420;150,500" -- add "@400" to wait after
+//   --click <spec>   ";"-separated taps: "450,420;150,500" -- ":400" holds, "@400" waits after
 //   --drag <spec>    ";"-separated swipes: "120,505>790,505" -- runs after clicks
 //   --settle <ms>    settle after input      (default 300)
 //   --timeout <ms>   overall bail-out        (default 30000)
@@ -149,11 +149,12 @@ try {
 	// Clicks: needed to reach on-screen buttons, which keyboard input cannot.
 	for (const step of String(argv.click ?? "").split(";").filter(Boolean)) {
 		const [pos, hold] = step.split("@");
-		const [cx, cy] = pos.split(",").map(Number);
+		const [xy, press] = pos.split(":"); // "450,420:400" holds the button 400ms
+		const [cx, cy] = xy.split(",").map(Number);
 		const base = { x: cx, y: cy, button: "left", clickCount: 1 };
 		await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base, buttons: 0 });
 		await send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 });
-		await sleep(35);
+		await sleep(int(press, 35));
 		await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 });
 		await sleep(int(hold, 260));
 	}
