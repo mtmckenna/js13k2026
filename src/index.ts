@@ -14,9 +14,17 @@ const HUES = [350, 35, 120, 205, 280];
 const VOICES = ["triangle", "sine", "triangle", "sine", "triangle"];
 const COUNT = NOTES.length;
 
-const SIZE = 1.55;
-const HIT = 38 * SIZE;
-const G = 1500;
+// Sized from the herd spacing so the whole scene scales together, clamped so phones
+// don't end up with ants and wall displays with giants.
+let SIZE = 1.55;
+let HIT = 59;
+
+// Flight time depends on the NOTE, never on the screen. It used to fall out of
+// sqrt(peak/G), which made arcs hang 18% longer on a tall display -- against a fixed
+// beat, that changed where every crossing happened.
+function flightFor(power: number) {
+  return 0.95 + power * 0.42;
+}
 const BOUNCE = 0.96;
 
 const BPM = 80;
@@ -67,6 +75,7 @@ interface Flyer {
   y: number;
   vx: number;
   vy: number;
+  g: number; // own gravity, so flight time is screen-independent
   hue: number;
   gait: number;
   boost: number; // seconds of held lift remaining
@@ -249,6 +258,8 @@ const jamBtn = { x: 0, y: 0, w: 0, h: 0 };
 const beatBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hardBtn = { x: 0, y: 0, w: 0, h: 0 };
 const copyBtn = { x: 0, y: 0, w: 0, h: 0 };
+const homeBtn = { x: 0, y: 0, w: 0, h: 0 };
+const goBtn = { x: 0, y: 0, w: 0, h: 0 }; // sits below the briefing, clear of the text
 // Set when there is something worth sharing. Copying was a side effect of pressing
 // STOP or DONE -- invisible, and impossible to repeat if you lost the clipboard.
 let shareUrl = "";
@@ -289,6 +300,10 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   groundY = H * 0.82;
   slot = W / (COUNT + 1);
+  SIZE = Math.max(1.05, Math.min(1.95, slot * 0.0105));
+  // Collision radius in herd-spacing units, floored so it never drops below the
+  // drawn body on a narrow phone.
+  HIT = Math.max(34, slot * 0.4);
   if (!clouds.length) seedClouds();
   for (let i = 0; i < herd.length; i++) herd[i].homeX = slot * (i + 1);
 
@@ -312,6 +327,16 @@ function resize() {
   beatBtn.h = 30;
   beatBtn.x = 12;
   beatBtn.y = restartBtn.y + restartBtn.h + 8;
+
+  goBtn.w = Math.min(260, W * 0.62);
+  goBtn.h = 62;
+  goBtn.x = (W - goBtn.w) / 2;
+  goBtn.y = H * 0.2 + 196;
+
+  homeBtn.w = 92;
+  homeBtn.h = 30;
+  homeBtn.x = 12;
+  homeBtn.y = beatBtn.y + beatBtn.h + 8;
 
   shareBtn.w = 82;
   shareBtn.h = 34;
@@ -483,6 +508,7 @@ const GRADE = 3;
 const REPLAY = 4;
 const COMPOSE = 5;
 const JAM = 6;
+const BRIEF = 7;
 
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
@@ -494,6 +520,13 @@ let offs: number[] = [];
 // height channel simply isn't in play there.
 let hgt: number[] = [];
 let hardcore = false;
+let compHard = false; // does the pattern being written use heights?
+
+// Where the hold actually changes anything. Normal play is deliberately one height:
+// holding does nothing, so there is exactly one thing to get right.
+function heightsLive() {
+  return phase === JAM || (phase === COMPOSE && compHard) || (hardcore && phase !== TITLE);
+}
 const HOLD_HIGH = 0.16; // held longer than this counts as asking for a high leap
 
 // Gap before the note being added. Straight quarter notes for a long time: the first
@@ -588,7 +621,8 @@ function encodeRun() {
     const d = offs[i] - offs[i - 1];
     g += d === 0.5 ? "0" : d === 2 ? "2" : "1";
   }
-  return seq.join("") + "." + g + "." + encodeTaps(taps);
+  const h = hgt.some((v) => v) ? "." + hgt.join("") : "";
+  return seq.join("") + "." + g + "." + encodeTaps(taps) + h;
 }
 
 let sharedJam = false;
@@ -615,7 +649,7 @@ function decodeRun(code: string) {
       sharedJam = true;
       return true;
     }
-    const [a, g, t] = code.split(".");
+    const [a, g, t, h] = code.split(".");
     if (!a || a.length < 2) return false;
     const q = a.split("").map(Number);
     if (q.some((v) => !(v >= 0 && v < COUNT))) return false;
@@ -627,6 +661,9 @@ function decodeRun(code: string) {
     seq = q;
     offs = o;
     taps = tp;
+    // A pattern that carries heights is a hardcore pattern, and says so by arriving.
+    hgt = h ? h.split("").map(Number) : q.map(() => 0);
+    hardcore = hgt.some((v) => v);
     judged = seq.map(() => -1);
     return true;
   } catch (e) {
@@ -801,10 +838,14 @@ function respondStart() {
 let lastLaunched: Flyer = null;
 
 function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
-  const peak = H * (0.2 + power * 0.34);
-  const vy = Math.sqrt(2 * G * peak);
-  const flight = (2 * vy) / G;
-  const reach = peak * 1.7;
+  const peak = H * (0.2 + power * 0.34); // height still reads against the screen
+  const flight = flightFor(power);
+  // Gravity is derived per leap so the flight lasts exactly `flight` everywhere.
+  const g = (8 * peak) / (flight * flight);
+  const vy = (4 * peak) / flight;
+  // Reach in HERD-SPACING units, not pixels: an arc always covers the same number of
+  // unicorns, so crossings line up the same on a phone as on a desktop.
+  const reach = slot * (2 + power * 2);
   if (x + dir * reach < 40 || x + dir * reach > W - 40) dir = -dir;
 
   const ribbon = { hue, pts: [], age: 0, fat: 0.6 + power };
@@ -815,6 +856,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     vx: (dir * reach) / flight,
     vy: -vy,
     hue,
+    g,
     // Airborne copies keep a stride too, and a random one for crowd extras.
     gait: idx === undefined ? Math.random() * 6.28 : herd[idx].gait,
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
@@ -934,6 +976,7 @@ function enterCompose() {
   ensureAudio();
   seq = [];
   offs = [];
+  hgt = [];
   taps = [];
   compAt = -1;
   patternDone = false;
@@ -962,8 +1005,11 @@ function composeTap(i: number) {
     offs.push(o);
   }
   seq.push(i);
+  hgt.push(0);
   note(NOTES[i], herd[i].voice, now, 0.22);
   leap(i, 0.5);
+  lastClaimK = seq.length - 1;
+  lastClaimAt = now;
 }
 
 // Copies the bare URL and nothing else. Copying a whole sentence means pasting prose
@@ -983,31 +1029,48 @@ function copyLink(url: string, y: number) {
       good ? "rgba(180,255,210,1)" : "rgba(255,170,170,1)",
       22
     );
+  // execCommand first, not the async Clipboard API. On iOS the async path needs an
+  // activation Safari accepts and can fail SILENTLY, so its rejection handler never
+  // ran and the fallback never fired. The synchronous path returns a real boolean.
+  if (legacyCopy(url)) {
+    done(true);
+    return;
+  }
   const nav = navigator as any;
   try {
     if (nav.clipboard && nav.clipboard.writeText) {
-      nav.clipboard.writeText(url).then(() => done(true), () => done(legacyCopy(url)));
+      nav.clipboard.writeText(url).then(() => done(true), () => done(false));
       return;
     }
   } catch (e) {}
-  done(legacyCopy(url));
+  done(false);
 }
 
 // Older Safari refuses the async clipboard outside narrow conditions; a selected
 // off-screen textarea still works there.
 function legacyCopy(url: string) {
   try {
+    // The iOS recipe specifically: contentEditable, a Range over the contents, THEN
+    // setSelectionRange. A plain .select() on a readonly textarea is ignored there.
+    // 16px font stops Safari zooming, and it must be on-screen (1px, transparent).
     const ta = document.createElement("textarea");
     ta.value = url;
-    ta.readOnly = true;
-    ta.style.cssText = "position:fixed;top:-99px;opacity:0;-webkit-user-select:text";
+    ta.contentEditable = "true";
+    ta.readOnly = false;
+    ta.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;-webkit-user-select:text";
     document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, url.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
+
+    const r = document.createRange();
+    r.selectNodeContents(ta);
     const sel = getSelection();
-    if (sel) sel.removeAllRanges(); // don't leave a selection for iOS to decorate
+    sel.removeAllRanges();
+    sel.addRange(r);
+    ta.setSelectionRange(0, 999999);
+
+    const ok = document.execCommand("copy");
+    sel.removeAllRanges(); // don't leave a selection for iOS to decorate
+    document.body.removeChild(ta);
     return ok;
   } catch (e) {
     return false;
@@ -1268,7 +1331,7 @@ function grab(id: string | number) {
     claimed.set(id, { k: lastClaimK, at: lastClaimAt });
     lastClaimK = -1;
   }
-  if (!lastLaunched) return;
+  if (!lastLaunched || !heightsLive()) return;
   lastLaunched.boost = HOLD;
   heldBy.set(id, lastLaunched);
 }
@@ -1280,7 +1343,13 @@ function release(id: string | number) {
 
   const c = claimed.get(id);
   claimed.delete(id);
-  if (!c || !hardcore || phase !== RESPOND || judged[c.k] <= 0) return;
+  if (!c) return;
+
+  if (phase === COMPOSE) {
+    if (compHard && c.k < hgt.length) hgt[c.k] = ac.currentTime - c.at > HOLD_HIGH ? 1 : 0;
+    return;
+  }
+  if (!hardcore || phase !== RESPOND || judged[c.k] <= 0) return;
 
   // Timing was settled on press; height is settled here, on release.
   const gave = ac.currentTime - c.at > HOLD_HIGH ? 1 : 0;
@@ -1318,6 +1387,13 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   // does nothing but wake it. Without this the overlay was a label with no behaviour.
   if (ac && ac.state !== "running") {
     ensureAudio();
+    return;
+  }
+
+  if (inRect(x, y, homeBtn) && (phase === CALL || phase === RESPOND || phase === GRADE)) {
+    hgt = [];
+    phase = TITLE;
+    hardcore = false;
     return;
   }
 
@@ -1364,6 +1440,11 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       doCopy();
       return;
     }
+    if (inRect(x, y, shareBtn)) {
+      compHard = !compHard;
+      if (!compHard) hgt = hgt.map(() => 0);
+      return;
+    }
     if (inRect(x, y, hearBtn)) previewPattern(ac.currentTime);
     else if (inRect(x, y, clearBtn)) {
       seq = [];
@@ -1402,8 +1483,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       return;
     }
     if (inRect(x, y, hardBtn)) {
-      hardcore = true;
-      startRun();
+      phase = BRIEF;
       return;
     }
     if (overHerd(y) && !inRect(x, y, playBtn) && !inRect(x, y, makeBtn) && !inRect(x, y, jamBtn)) {
@@ -1418,6 +1498,14 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       else if (sharedIn) startChallenge();
       else startRun();
     }
+    return;
+  }
+
+  if (phase === BRIEF) {
+    if (inRect(x, y, goBtn)) {
+      hardcore = true;
+      startRun();
+    } else if (inRect(x, y, restartBtn)) phase = TITLE;
     return;
   }
 
@@ -1761,6 +1849,24 @@ const GOLD = 1; // the primary action, in horn gold
 const LOCKED = 2;
 const QUIET = 3;
 
+// Letters knocked off true, one at a time. HARDCORE should look like it's shouting.
+function wonky(str: string, cx: number, cy: number, size: number, col: string) {
+  ctx.letterSpacing = "0px";
+  ctx.font = `800 ${size}px system-ui,-apple-system,sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillStyle = col;
+  let x = cx - ctx.measureText(str).width / 2;
+  for (let i = 0; i < str.length; i++) {
+    const w = ctx.measureText(str[i]).width;
+    ctx.save();
+    ctx.translate(x + w / 2, cy + Math.sin(i * 1.9) * 2.4);
+    ctx.rotate(Math.sin(i * 2.3 + 1) * 0.3);
+    ctx.fillText(str[i], 0, 0);
+    ctx.restore();
+    x += w;
+  }
+}
+
 function spaced(s: string, x: number, y: number, size: number, col: string, weight: number) {
   ctx.letterSpacing = `${Math.max(1, size * 0.09)}px`;
   ctx.fillStyle = col;
@@ -1951,11 +2057,11 @@ function frame(nowMs: number) {
     // Held notes climb further: quarter gravity while rising and still held. The note
     // already sounded on press, so timing is untouched -- this only shapes the arc.
     if (f.boost > 0 && f.vy < 0) {
-      f.vy += G * 0.25 * dt;
+      f.vy += f.g * 0.25 * dt;
       f.boost -= dt;
       f.glow = Math.min(1, f.glow + dt * 1.6);
     } else {
-      f.vy += G * dt;
+      f.vy += f.g * dt;
     }
     f.x += f.vx * dt;
     f.y += f.vy * dt;
@@ -2120,7 +2226,8 @@ function frame(nowMs: number) {
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
-    btn(hardBtn, "HARDCORE");
+    btn(hardBtn, "");
+    wonky("HARDCORE", hardBtn.x + hardBtn.w / 2, hardBtn.y + 30, Math.min(17, hardBtn.w / 7.4), "rgba(255,255,255,.95)");
     btn(jamBtn, "JAM");
     btn(makeBtn, "PATTERN");
 
@@ -2144,6 +2251,22 @@ function frame(nowMs: number) {
 
     // Demoted to small print. As a shout it out-competed the actual call to action.
     text("turn on yer sound", W / 2, H - 20, Math.min(16, W / 30), 0.42);
+    return;
+  }
+
+  if (phase === BRIEF) {
+    wonky("HARDCORE", W / 2, H * 0.2, Math.min(52, W / 9), "rgba(255,255,255,.96)");
+    const lines = [
+      "notes now come at two heights",
+      "TAP for a low hop  ·  HOLD for a high leap",
+      "the herd shows you which one it wants",
+      "wrong height still counts, but only 45%",
+      "timing works exactly as before",
+    ];
+    for (let i = 0; i < lines.length; i++)
+      text(lines[i], W / 2, H * 0.2 + 46 + i * 26, Math.min(16, W / 30), i === 1 ? 0.85 : 0.55);
+    btn(goBtn, "BRING IT ON", undefined, GOLD);
+    btn(restartBtn, "BACK", undefined, QUIET);
     return;
   }
 
@@ -2175,7 +2298,14 @@ function frame(nowMs: number) {
       15,
       0.45
     );
-    text("notes snap to the nearest half beat", W / 2, H * 0.16 + 50, 13, 0.3);
+    text(
+      compHard ? "hold a unicorn to write a high note" : "notes snap to the nearest half beat",
+      W / 2,
+      H * 0.16 + 50,
+      13,
+      0.3
+    );
+    btn(shareBtn, compHard ? "HARDCORE" : "NORMAL", undefined, compHard ? GOLD : QUIET);
 
     // the pattern so far, spaced by time
     if (seq.length) {
@@ -2184,7 +2314,7 @@ function frame(nowMs: number) {
       const x0 = W / 2 - span / 2;
       for (let i = 0; i < seq.length; i++) {
         ctx.beginPath();
-        ctx.arc(x0 + (offs[i] / beats) * span, H * 0.16 + 84, 6, 0, 6.284);
+        ctx.arc(x0 + (offs[i] / beats) * span, H * 0.16 + 84, hgt[i] ? 9 : 6, 0, 6.284);
         ctx.fillStyle = `hsl(${HUES[seq[i]]},80%,66%)`;
         ctx.fill();
       }
@@ -2341,6 +2471,7 @@ function frame(nowMs: number) {
     const armed = restartArm > 0 && now < restartArm;
     btn(restartBtn, armed ? "SURE?" : "RESTART", undefined, armed ? GOLD : QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
+    btn(homeBtn, "HOME", undefined, QUIET);
     btn(shareBtn, now - copiedAt < 3 ? "COPIED" : "COPY", undefined, QUIET);
   }
 
