@@ -9,20 +9,27 @@
     <title>Unicorn Storm</title>
     <style>
       html, body {
-        width: 100%;
-        height: 100%;
+        /* position:fixed is the part that actually works. overflow:hidden alone still
+           lets iOS Safari pan the page after a double-tap zoom. */
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
         margin: 0;
         padding: 0;
         overflow: hidden;
+        overscroll-behavior: none;
+        touch-action: none;
         background: #141033;
       }
 
       canvas {
         display: block;
-        /* Without this, iOS Safari scrolls and zooms instead of letting you play. */
         touch-action: none;
         -webkit-user-select: none;
         user-select: none;
+        -webkit-touch-callout: none;
       }
     </style>
   </head>

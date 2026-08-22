@@ -62,6 +62,7 @@ interface Flyer {
   vx: number;
   vy: number;
   hue: number;
+  idx: number; // which unicorn -- so a collision can sound their two notes
   glow: number;
   hot: boolean; // launched by a correct note -- only these can score a collision bonus
   ribbon: Ribbon;
@@ -126,10 +127,28 @@ function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: n
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 }
 
+// iOS ignores user-scalable=no, so double-tap and pinch still zoom and pan the page.
+// These are the events that actually carry it.
+for (const ev of ["gesturestart", "gesturechange", "gestureend", "dblclick"]) {
+  addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+}
+
+// Probe for the notch/status-bar inset. env() is only reachable from CSS, so measure
+// an element sized by it rather than guessing a constant.
+const probe = document.createElement("div");
+probe.style.cssText =
+  "position:fixed;top:0;left:0;width:0;pointer-events:none;height:env(safe-area-inset-top,0px)";
+document.body.appendChild(probe);
+let topPad = 0;
+
 function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
-  W = innerWidth;
-  H = innerHeight;
+  // visualViewport tracks the area actually visible as Safari's toolbars slide in and
+  // out; innerHeight lags behind it and leaves a dead strip at the bottom.
+  const vv = (window as any).visualViewport;
+  W = Math.round(vv ? vv.width : innerWidth);
+  H = Math.round(vv ? vv.height : innerHeight);
+  topPad = probe.offsetHeight || 0;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   canvas.style.width = W + "px";
@@ -148,12 +167,12 @@ function resize() {
   restartBtn.w = 92;
   restartBtn.h = 34;
   restartBtn.x = 12;
-  restartBtn.y = 12;
+  restartBtn.y = 12 + topPad;
 
   shareBtn.w = 82;
   shareBtn.h = 34;
   shareBtn.x = W - 94;
-  shareBtn.y = 12;
+  shareBtn.y = 12 + topPad;
 
   // End-of-round choice, side by side and equally reachable.
   const gw = Math.min(168, (W - 56) / 2);
@@ -166,6 +185,20 @@ function resize() {
   nextBtn.x = W / 2 + 8;
 }
 addEventListener("resize", resize);
+addEventListener("orientationchange", resize);
+{
+  const vv = (window as any).visualViewport;
+  if (vv) {
+    vv.addEventListener("resize", resize);
+    vv.addEventListener("scroll", resize);
+  }
+}
+
+// Coming back from another app or an unlocked screen should recover on its own,
+// without the player having to discover that a tap is required.
+addEventListener("visibilitychange", () => {
+  if (!document.hidden && ac) ensureAudio();
+});
 
 // --- audio ---------------------------------------------------------------
 // Everything is scheduled against ac.currentTime. setTimeout drifts, and drift is
@@ -205,6 +238,31 @@ function click(when: number, strong: boolean) {
   osc.stop(t + 0.07);
 }
 
+// Two unicorns meeting should sound like the pair of them. The scale is major
+// pentatonic, so ANY two of these notes are already consonant -- the only muddy case
+// is two adjacent degrees stacked close, so the lower voice is placed an octave below
+// the upper one. That turns a major 2nd into a 9th: open and bell-like, never a clash.
+function chime(a: number, b: number, vol: number) {
+  const lo = NOTES[Math.min(a, b)] * 2;
+  const hi = NOTES[Math.max(a, b)] * 4;
+  const t = ac.currentTime;
+  for (const f of [lo, hi]) {
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + 0.85);
+    g.connect(ac.destination);
+    const o = ac.createOscillator();
+    o.type = "sine";
+    o.frequency.setValueAtTime(f, t);
+    // A touch of upward drift for sparkle, far too small to bend the interval.
+    o.frequency.linearRampToValueAtTime(f * 1.02, t + 0.5);
+    o.connect(g);
+    o.start(t);
+    o.stop(t + 0.9);
+  }
+}
+
 function ping(freq: number, vol: number) {
   const t = ac.currentTime;
   const gain = ac.createGain();
@@ -230,6 +288,30 @@ const GRADE = 3;
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
 let seq: number[] = [];
+// Beat offset of each note from the phrase start. Uniform 1-beat spacing to begin
+// with; longer phrases earn held notes and then off-beat pairs.
+let offs: number[] = [];
+
+// Gap before the note being added. Straight quarter notes for a long time: the first
+// six notes are pure which-and-when, with no rhythm to learn on top. Held notes come
+// next because they are EASIER (more room), and off-beats only once you are deep in.
+function nextGap(len: number) {
+  if (len < 7) return 1;
+  const pool = len < 10 ? [1, 1, 1, 1, 2] : [1, 1, 1, 1, 2, 2, 0.5];
+  return pool[(Math.random() * pool.length) | 0];
+}
+
+function phraseBeats() {
+  return offs[offs.length - 1];
+}
+
+// A half-beat gap is 375ms, so the flat +/-360ms window would swallow its neighbour.
+// Never let the window exceed 45% of the tightest gap in this phrase.
+function windowFor() {
+  let min = 9;
+  for (let i = 1; i < offs.length; i++) min = Math.min(min, offs[i] - offs[i - 1]);
+  return Math.min(WINDOW, min * BEAT * 0.48);
+}
 let round = 0;
 let best = 0; // longest phrase reached
 let bestScore = 0;
@@ -289,8 +371,13 @@ function newRound(now: number, grow: boolean) {
   }
   mult = Math.min(5, 1 + streak * 0.5);
 
-  if (!seq.length) seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
-  else if (grow) seq.push((Math.random() * COUNT) | 0);
+  if (!seq.length) {
+    seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
+    offs = [0, 1];
+  } else if (grow) {
+    seq.push((Math.random() * COUNT) | 0);
+    offs.push(phraseBeats() + nextGap(seq.length));
+  }
 
   judged = seq.map(() => -1);
   schedIdx = visIdx = 0;
@@ -355,7 +442,7 @@ function celebrate(a: number, now: number) {
     }
 
     for (let i = 0; i < COUNT; i++) {
-      burst(slot * (i + 1), groundY - H * 0.34 * Math.random() - 70, HUES[i], HUES[(i + 2) % COUNT], 1);
+      burst(slot * (i + 1), groundY - H * 0.34 * Math.random() - 70, i, (i + 2) % COUNT, 1);
     }
   } else if (a >= 0.9) {
     // Rainbows, but calm ones -- the tier above has somewhere left to go.
@@ -391,14 +478,14 @@ function celebrate(a: number, now: number) {
 }
 
 function respondStart() {
-  return phaseAt + (seq.length - 1 + REST) * BEAT;
+  return phaseAt + (phraseBeats() + REST) * BEAT;
 }
 
 // --- leaping -------------------------------------------------------------
 
 // Exaggeration is the reward: arcs swell with `power`, which tracks how well the
 // player is doing right now.
-function launch(x: number, hue: number, power: number, dir: number, hot?: boolean) {
+function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
   const peak = H * (0.2 + power * 0.34);
   const vy = Math.sqrt(2 * G * peak);
   const flight = (2 * vy) / G;
@@ -413,6 +500,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     vx: (dir * reach) / flight,
     vy: -vy,
     hue,
+    idx: idx === undefined ? HUES.indexOf(hue) : idx,
     glow: 0.3 + power * 0.7,
     hot: !!hot,
     ribbon,
@@ -422,11 +510,13 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
 function leap(i: number, power: number, hot?: boolean) {
   const u = herd[i];
   // Alternate by index so neighbours sweep opposite ways and their arcs can meet.
-  launch(u.homeX, u.hue, power, i % 2 ? -1 : 1, hot);
+  launch(u.homeX, u.hue, power, i % 2 ? -1 : 1, hot, i);
   u.lit = 1;
 }
 
-function burst(x: number, y: number, h1: number, h2: number, power: number) {
+function burst(x: number, y: number, i1: number, i2: number, power: number) {
+  const h1 = HUES[i1];
+  const h2 = HUES[i2];
   flashes.push({ x, y, age: 0, r: 60 + power * 90 });
   const n = 30 + ((power * 90) | 0);
   for (let i = 0; i < n; i++) {
@@ -443,10 +533,7 @@ function burst(x: number, y: number, h1: number, h2: number, power: number) {
       white: i % 7 === 0,
     });
   }
-  if (ac) {
-    ping(NOTES[0] * 4, 0.06 + power * 0.1);
-    ping(NOTES[2] * 4, 0.06 + power * 0.1);
-  }
+  if (ac) chime(i1, i2, 0.05 + power * 0.09);
 }
 
 // --- input ---------------------------------------------------------------
@@ -455,7 +542,14 @@ let unlocked = false;
 
 function ensureAudio() {
   if (!ac) ac = new (window.AudioContext || (window as any).webkitAudioContext)();
-  if (ac.state === "suspended") ac.resume();
+  // Any state that isn't "running" needs a resume. Checking only for "suspended"
+  // missed Safari's "interrupted" state, which left the overlay permanently stuck:
+  // the message said tap to resume, and the tap genuinely did nothing.
+  if (ac.state !== "running") {
+    try {
+      ac.resume();
+    } catch (e) {}
+  }
   if (!unlocked) {
     unlocked = true;
     // Silent blip. Some mobile browsers leave the clock parked until a node has
@@ -547,17 +641,28 @@ function tap(i: number) {
     return;
   }
 
-  const k = Math.round((now - turnAt) / BEAT);
-  if (k < 0 || k >= seq.length || judged[k] >= 0) {
-    leap(i, 0.3); // stray tap: it still leaps, just joylessly
+  // Slots are no longer evenly spaced, so find the nearest unclaimed one rather
+  // than dividing by the beat.
+  let k = -1;
+  let bestOff = 1e9;
+  for (let j = 0; j < seq.length; j++) {
+    if (judged[j] >= 0) continue;
+    const d = Math.abs(now - (turnAt + offs[j] * BEAT));
+    if (d < bestOff) {
+      bestOff = d;
+      k = j;
+    }
+  }
+  const win = windowFor();
+  if (k < 0 || bestOff > win) {
+    leap(i, 0.3);
     flourish = Math.max(0, flourish - 0.15);
     say(lx, ly, "extra", "rgba(255,255,255,.5)", 15);
     return;
   }
-
-  const delta = now - (turnAt + k * BEAT); // signed: <0 early, >0 late
+  const delta = now - (turnAt + offs[k] * BEAT); // signed: <0 early, >0 late
   const off = Math.abs(delta);
-  const timing = Math.max(0, 1 - off / WINDOW);
+  const timing = Math.max(0, 1 - off / win);
   const right = seq[k] === i;
   judged[k] = right ? timing : 0;
 
@@ -675,12 +780,12 @@ function update(now: number) {
     // Audio runs ahead of the picture: schedule notes up to 120ms early so they
     // land exactly on the beat, and let the visuals catch up in their own frame.
     while (schedIdx < seq.length) {
-      const at = phaseAt + schedIdx * BEAT;
+      const at = phaseAt + offs[schedIdx] * BEAT;
       if (at > now + 0.12) break;
       note(NOTES[seq[schedIdx]], herd[seq[schedIdx]].voice, at, 0.24);
       schedIdx++;
     }
-    while (visIdx < seq.length && now >= phaseAt + visIdx * BEAT) {
+    while (visIdx < seq.length && now >= phaseAt + offs[visIdx] * BEAT) {
       leap(seq[visIdx], 0.45 + flourish * 0.55);
       visIdx++;
     }
@@ -702,8 +807,8 @@ function update(now: number) {
     // If they never tapped, end the turn after a generous wait rather than hanging.
     const endAt =
       turnAt < 0
-        ? respondStart() + (seq.length + 4) * BEAT
-        : turnAt + (seq.length - 1) * BEAT + WINDOW;
+        ? respondStart() + (phraseBeats() + 4) * BEAT
+        : turnAt + phraseBeats() * BEAT + windowFor();
     if (now > endAt) {
       let sum = 0;
       for (let i = 0; i < seq.length; i++) {
@@ -748,6 +853,13 @@ function update(now: number) {
 
 // --- render --------------------------------------------------------------
 
+function poly(p: number[]) {
+  ctx.beginPath();
+  ctx.moveTo(p[0], p[1]);
+  for (let i = 2; i < p.length; i += 2) ctx.lineTo(p[i], p[i + 1]);
+  ctx.closePath();
+}
+
 function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, glow: number) {
   ctx.save();
   ctx.translate(x, y);
@@ -767,46 +879,77 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
     ctx.fill();
   }
 
-  ctx.fillStyle = `hsl(${hue},72%,${66 + glow * 12}%)`;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, 15, 10, 0, 0, 6.284);
-  ctx.fill();
+  // Angular, faceted build: flat planes and hard corners instead of ellipses. Two
+  // tones per mass -- a lit plane and a shadowed one -- so the silhouette reads as
+  // folded panels rather than a blob.
+  const lit = `hsl(${hue},72%,${66 + glow * 12}%)`;
+  const dim = `hsl(${hue},64%,${50 + glow * 10}%)`;
+  const pale = `hsl(${hue},76%,${74 + glow * 10}%)`;
 
-  ctx.strokeStyle = `hsl(${hue},62%,58%)`;
-  ctx.lineWidth = 3.5;
-  ctx.lineCap = "round";
-  for (let i = 0; i < 4; i++) {
+  // legs -- straight segments with a hard knee
+  ctx.strokeStyle = dim;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "butt";
+  ctx.lineJoin = "miter";
+  const legs = [7, 4, 3, 5, -9, 4, -5, 5];
+  for (let i = 0; i < 8; i += 2) {
     ctx.beginPath();
-    ctx.moveTo(-9 + i * 6, 6);
-    ctx.lineTo(-11 + i * 6, 15);
+    ctx.moveTo(legs[i], legs[i + 1]);
+    ctx.lineTo(legs[i] + 1.5, legs[i + 1] + 7);
+    ctx.lineTo(legs[i] - 1.5, legs[i + 1] + 12);
     ctx.stroke();
   }
 
-  ctx.fillStyle = `hsl(${hue},75%,72%)`;
+  // tail -- a zigzag streak, no curves
+  ctx.strokeStyle = pale;
+  ctx.lineWidth = 2.6;
   ctx.beginPath();
-  ctx.ellipse(13, -10, 7, 6, 0.4, 0, 6.284);
+  ctx.moveTo(-13, -2);
+  ctx.lineTo(-19, -7);
+  ctx.lineTo(-23, -1);
+  ctx.lineTo(-20, 4);
+  ctx.lineTo(-25, 8);
+  ctx.stroke();
+
+  poly([-14, 0, -9, -8, 1, -9, 9, -5, 10, 4, -2, 6, -11, 5]); // barrel
+  ctx.fillStyle = lit;
+  ctx.fill();
+  poly([-11, 5, -2, 6, 10, 4, 9, 0, -6, 2]); // underside facet
+  ctx.fillStyle = dim;
   ctx.fill();
 
+  poly([4, -7, 10, -18, 15, -17, 9, -4]); // neck
+  ctx.fillStyle = lit;
+  ctx.fill();
+
+  poly([10, -18, 22, -15, 17, -8, 9, -11]); // wedge head
+  ctx.fillStyle = pale;
+  ctx.fill();
+
+  poly([10.2, -16.6, 9.2, -24.5, 13.6, -15.8]); // ear, rooted on the skull line
+  ctx.fillStyle = dim;
+  ctx.fill();
+
+  // Horn base straddles the skull line and sits just inside it, so it grows out of
+  // the head instead of hovering over it.
+  poly([12.4, -16.3, 23, -33.5, 18.4, -14.9]);
   ctx.fillStyle = "#ffd75e";
-  ctx.beginPath();
-  ctx.moveTo(15, -16);
-  ctx.lineTo(20, -28);
-  ctx.lineTo(11, -17);
+  ctx.fill();
+  poly([17.6, -15.2, 23, -33.5, 18.4, -14.9]); // shadowed side
+  ctx.fillStyle = "#e0ac2b";
   ctx.fill();
 
+  // mane -- chevrons up the neck, pointing back
   for (let i = 0; i < 4; i++) {
-    ctx.strokeStyle = `hsl(${hue + i * 9 - 14},92%,${76 - i * 4}%)`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(6 - i * 2, -9 + i * 3);
-    ctx.quadraticCurveTo(-2 - i * 3, -14 + i * 3, -10 - i * 3, -4 + i * 4);
-    ctx.stroke();
+    poly([3 + i * 2.6, -7 - i * 2.9, 9 + i * 2, -12 - i * 2.6, -1 + i * 2.6, -11 - i * 2.9]);
+    ctx.fillStyle = `hsl(${hue + i * 8 - 12},94%,${78 - i * 5}%)`;
+    ctx.fill();
   }
 
-  ctx.fillStyle = "#3a2b4d";
-  ctx.beginPath();
-  ctx.arc(15, -11, 1.4, 0, 6.284);
+  poly([16, -15, 18, -13.5, 16, -12, 14.4, -13.5]); // eye, a diamond
+  ctx.fillStyle = "#2e2340";
   ctx.fill();
+
   ctx.restore();
 }
 
@@ -972,7 +1115,7 @@ function frame(nowMs: number) {
       const mx = (a.x + b.x) / 2;
       const my = (a.y + b.y) / 2;
       const bonus = a.hot && b.hot;
-      burst(mx, my, a.hue, b.hue, bonus ? 1 : 0.3 + flourish);
+      burst(mx, my, a.idx, b.idx, bonus ? 1 : 0.3 + flourish);
       if (bonus) {
         const pts = Math.round(250 * mult);
         score += pts;
@@ -1099,8 +1242,6 @@ function frame(nowMs: number) {
         );
     }
 
-    text("or tap a unicorn to hear its voice", W / 2, groundY - 74, Math.min(17, W / 31), 0.45);
-
     // Demoted to small print. As a shout it out-competed the actual call to action.
     text("best with sound on — on iPad check the silent switch", W / 2, H - 20, Math.min(14, W / 38), 0.35);
     return;
@@ -1109,16 +1250,32 @@ function frame(nowMs: number) {
   // Sequence dots: one per note, so you can see how long the phrase is and,
   // during your turn, which beat you're on.
   const n = seq.length;
-  const dotY = 42;
-  const cursor = phase === RESPOND ? (turnAt < 0 ? 0 : Math.round((now - turnAt) / BEAT)) : -1;
+  const dotY = 42 + topPad;
+  let cursor = -1;
+  if (phase === RESPOND) {
+    cursor = 0;
+    if (turnAt >= 0) {
+      let d = 1e9;
+      for (let j = 0; j < seq.length; j++) {
+        const t = Math.abs(now - (turnAt + offs[j] * BEAT));
+        if (judged[j] < 0 && t < d) {
+          d = t;
+          cursor = j;
+        }
+      }
+    }
+  }
 
+  // Dots are laid out by TIME, not by index: a half-beat pair sits tight together
+  // and a two-beat gap opens up. The row becomes readable notation of the rhythm.
+  const beats = Math.max(1, phraseBeats());
   if (n <= 16) {
-    const spread = Math.min(34, W / (n + 3));
-    const r = Math.min(5.5, spread * 0.24);
-    const x0 = W / 2 - ((n - 1) * spread) / 2;
+    const span = Math.min(W - 96, 30 * beats);
+    const r = Math.min(5.5, Math.max(2.6, (span / beats) * 0.16));
+    const x0 = W / 2 - span / 2;
     for (let i = 0; i < n; i++) {
       ctx.beginPath();
-      ctx.arc(x0 + i * spread, dotY, i === cursor ? r + 2.5 : r, 0, 6.284);
+      ctx.arc(x0 + (offs[i] / beats) * span, dotY, i === cursor ? r + 2.5 : r, 0, 6.284);
       ctx.fillStyle = slotColor(i, cursor);
       ctx.fill();
     }
@@ -1127,10 +1284,15 @@ function frame(nowMs: number) {
     // "7 / 24" readout: you stop counting pips and start reading a position.
     const bw = Math.min(W - 76, 470);
     const bx = (W - bw) / 2;
-    const seg = bw / n;
     for (let i = 0; i < n; i++) {
+      const gap = i + 1 < n ? offs[i + 1] - offs[i] : 1;
       ctx.fillStyle = slotColor(i, cursor);
-      ctx.fillRect(bx + i * seg, dotY - (i === cursor ? 9 : 5), Math.max(1.5, seg - 1.2), i === cursor ? 18 : 10);
+      ctx.fillRect(
+        bx + (offs[i] / beats) * bw,
+        dotY - (i === cursor ? 9 : 5),
+        Math.max(1.5, (gap / beats) * bw - 1.2),
+        i === cursor ? 18 : 10
+      );
     }
     text(`${Math.min(Math.max(cursor + 1, 1), n)} / ${n}`, W / 2, dotY + 26, 12, 0.45);
   }
@@ -1227,10 +1389,15 @@ function frame(nowMs: number) {
   }
 
   if (ac.state !== "running") {
-    text("paused — tap to resume", W / 2, H * 0.5, 20, 0.75);
+    ctx.fillStyle = "rgba(10,8,24,.72)";
+    ctx.fillRect(0, 0, W, H);
+    text("paused", W / 2, H * 0.46, 30, 0.9);
+    text("tap anywhere to resume", W / 2, H * 0.46 + 30, 18, 0.6);
+    // Surfaced deliberately: if a tap still won't clear this, the state name says why.
+    text(`audio: ${ac.state}`, W / 2, H * 0.46 + 56, 13, 0.35);
   }
 
-  text(`${score}`, W / 2, 98, 22, 0.7);
+  text(`${score}`, W / 2, 98 + topPad, 22, 0.7);
   text(
     `${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
     W / 2,
