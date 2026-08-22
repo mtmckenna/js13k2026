@@ -247,6 +247,7 @@ const backBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hearBtn = { x: 0, y: 0, w: 0, h: 0 };
 const jamBtn = { x: 0, y: 0, w: 0, h: 0 };
 const beatBtn = { x: 0, y: 0, w: 0, h: 0 };
+const hardBtn = { x: 0, y: 0, w: 0, h: 0 };
 let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
@@ -316,12 +317,13 @@ function resize() {
   againBtn.x = W / 2 - gw - 8;
   nextBtn.x = W / 2 + 8;
 
-  const bw2 = Math.min(172, (W - 60) / 2);
-  jamBtn.w = makeBtn.w = bw2;
-  jamBtn.h = makeBtn.h = 46;
-  jamBtn.y = makeBtn.y = playBtn.y + playBtn.h + 68;
-  jamBtn.x = W / 2 - bw2 - 8;
-  makeBtn.x = W / 2 + 8;
+  const bw3 = Math.min(150, (W - 64) / 3);
+  jamBtn.w = makeBtn.w = hardBtn.w = bw3;
+  jamBtn.h = makeBtn.h = hardBtn.h = 46;
+  jamBtn.y = makeBtn.y = hardBtn.y = playBtn.y + playBtn.h + 68;
+  hardBtn.x = W / 2 - bw3 * 1.5 - 8;
+  jamBtn.x = W / 2 - bw3 / 2;
+  makeBtn.x = W / 2 + bw3 / 2 + 8;
 
   // Four across: hear it, wipe it, copy it, leave.
   const cw = Math.min(120, (W - 60) / 4);
@@ -477,6 +479,11 @@ let seq: number[] = [];
 // Beat offset of each note from the phrase start. Uniform 1-beat spacing to begin
 // with; longer phrases earn held notes and then off-beat pairs.
 let offs: number[] = [];
+// Hardcore only: 0 = a low hop, 1 = a high leap. Normal phrases are all low, so the
+// height channel simply isn't in play there.
+let hgt: number[] = [];
+let hardcore = false;
+const HOLD_HIGH = 0.16; // held longer than this counts as asking for a high leap
 
 // Gap before the note being added. Straight quarter notes for a long time: the first
 // six notes are pure which-and-when, with no rhythm to learn on top. Held notes come
@@ -555,22 +562,48 @@ let sharedIn = false; // arrived via a shared replay link
 
 // Compact enough for a URL hash: notes as digits, gaps as one char each, and every
 // tap as a digit plus two base36 chars of 20ms units.
+function encodeTaps(list: { i: number; dt: number }[]) {
+  let t = "";
+  for (const p of list) {
+    const u = Math.min(1295, Math.max(0, Math.round(p.dt * 50)));
+    t += p.i + ("0" + u.toString(36)).slice(-2);
+  }
+  return t;
+}
+
 function encodeRun() {
   let g = "";
   for (let i = 1; i < offs.length; i++) {
     const d = offs[i] - offs[i - 1];
     g += d === 0.5 ? "0" : d === 2 ? "2" : "1";
   }
-  let t = "";
-  for (const p of taps) {
-    const u = Math.min(1295, Math.max(0, Math.round(p.dt * 50)));
-    t += p.i + ("0" + u.toString(36)).slice(-2);
+  return seq.join("") + "." + g + "." + encodeTaps(taps);
+}
+
+let sharedJam = false;
+
+function decodeTaps(t: string) {
+  const tp: { i: number; dt: number }[] = [];
+  for (let i = 0; i + 2 < t.length; i += 3) {
+    const u = +t[i];
+    if (!(u >= 0 && u < COUNT)) return null;
+    tp.push({ i: u, dt: parseInt(t.slice(i + 1, i + 3), 36) / 50 });
   }
-  return seq.join("") + "." + g + "." + t;
+  return tp;
 }
 
 function decodeRun(code: string) {
   try {
+    // "j.<taps>" is a recorded jam: a performance with no phrase behind it.
+    if (code.slice(0, 2) === "j.") {
+      const tp = decodeTaps(code.slice(2));
+      if (!tp || tp.length < 2) return false;
+      taps = tp;
+      seq = [];
+      offs = [];
+      sharedJam = true;
+      return true;
+    }
     const [a, g, t] = code.split(".");
     if (!a || a.length < 2) return false;
     const q = a.split("").map(Number);
@@ -578,12 +611,8 @@ function decodeRun(code: string) {
     const o = [0];
     for (let i = 0; i < g.length; i++) o.push(o[i] + (g[i] === "0" ? 0.5 : g[i] === "2" ? 2 : 1));
     if (o.length !== q.length) return false;
-    const tp = [];
-    for (let i = 0; i + 2 < t.length; i += 3) {
-      const u = +t[i];
-      if (!(u >= 0 && u < COUNT)) return false;
-      tp.push({ i: u, dt: parseInt(t.slice(i + 1, i + 3), 36) / 50 });
-    }
+    const tp = decodeTaps(t);
+    if (!tp) return false;
     seq = q;
     offs = o;
     taps = tp;
@@ -642,9 +671,11 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
   } else if (!seq.length) {
     seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
     offs = [0, 1];
+    hgt = hardcore ? [(Math.random() * 2) | 0, (Math.random() * 2) | 0] : [0, 0];
   } else if (grow) {
     seq.push((Math.random() * COUNT) | 0);
     offs.push(phraseBeats() + nextGap(seq.length));
+    hgt.push(hardcore && Math.random() < 0.45 ? 1 : 0);
   }
 
   judged = seq.map(() => -1);
@@ -789,8 +820,9 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
 function leap(i: number, power: number, hot?: boolean) {
   const u = herd[i];
   // Alternate by index so neighbours sweep opposite ways and their arcs can meet.
-  launch(u.homeX, u.hue, power, i % 2 ? -1 : 1, hot, i);
+  const f = launch(u.homeX, u.hue, power, i % 2 ? -1 : 1, hot, i);
   u.lit = 1;
+  return f;
 }
 
 function burst(x: number, y: number, i1: number, i2: number, power: number) {
@@ -806,10 +838,12 @@ function burst(x: number, y: number, i1: number, i2: number, power: number) {
       y,
       vx: Math.cos(a) * s,
       vy: Math.sin(a) * s,
-      hue: Math.random() < 0.5 ? h1 : h2,
+      // Fan across the arc between the two hues rather than picking one of them, so a
+      // burst is a spectrum instead of two tones that average out to white.
+      hue: h1 + (((h2 - h1 + 540) % 360) - 180) * (i / n) * 1.15 + (Math.random() - 0.5) * 26,
       age: 0,
       life: 0.7 + Math.random() * 0.8,
-      white: i % 7 === 0,
+      white: i % 17 === 0, // a couple of hot-core sparks, not a seventh of them
     });
   }
   if (ac) chime(i1, i2, 0.05 + power * 0.09);
@@ -857,6 +891,24 @@ let compAt = -1; // audio time of the first note laid down
 // Jam mode has no score to drive the spectacle, so the playing drives it instead:
 // every note stokes the weather, and it dies down when you stop.
 let jamHeat = 0;
+let jamRec = false;
+let jamRecAt = 0;
+let jamTaps: { i: number; dt: number }[] = [];
+
+// A jam is a performance, not a challenge -- there's no phrase to match, so it gets
+// its own "j." link that simply plays back what was played.
+function playJam(now: number) {
+  if (!taps.length) return;
+  pending.length = 0;
+  const t0 = now + 0.4;
+  for (const p of taps) {
+    const at = t0 + p.dt;
+    note(NOTES[p.i], herd[p.i].voice, at, 0.22);
+    pending.push({ at, i: p.i, power: 0.7 });
+  }
+  replayEnd = t0 + taps[taps.length - 1].dt + 1.4;
+  phase = REPLAY;
+}
 
 function enterJam() {
   ensureAudio();
@@ -1030,6 +1082,7 @@ function startChallenge() {
 
 function startRun() {
   ensureAudio();
+  hgt = [];
 
   const go = () => {
     seq = [];
@@ -1115,6 +1168,7 @@ function tap(i: number) {
   }
   taps.push({ i, dt: now - turnAt });
 
+  lastClaimK = -1;
   const win = windowFor();
   if (k < 0 || bestOff > win) {
     leap(i, 0.3);
@@ -1127,6 +1181,10 @@ function tap(i: number) {
   const timing = Math.max(0, 1 - off / win);
   const right = seq[k] === i;
   judged[k] = right ? timing : 0;
+  if (right) {
+    lastClaimK = k;
+    lastClaimAt = now;
+  }
 
   // Name the error, and say which way. "EARLY" is actionable; a red dot isn't.
   if (!right) {
@@ -1149,6 +1207,10 @@ function tap(i: number) {
 // One place that decides what a note in column `col` means, so a slide behaves
 // exactly like a tap in every mode.
 function jamNote(i: number) {
+  if (jamRec && jamTaps.length < 160) {
+    if (!jamTaps.length) jamRecAt = ac.currentTime;
+    jamTaps.push({ i, dt: ac.currentTime - jamRecAt });
+  }
   if (!freeBeat) {
     freeBeat = true;
     pulseAt = ac.currentTime;
@@ -1178,7 +1240,16 @@ const slideCol = new Map<number, number>();
 const heldBy = new Map<string | number, Flyer>();
 const HOLD = 0.34; // seconds of lift available, so it can't be held forever
 
+// Which slot each press claimed, so its release can be judged on height.
+const claimed = new Map<string | number, { k: number; at: number }>();
+let lastClaimK = -1;
+let lastClaimAt = 0;
+
 function grab(id: string | number) {
+  if (lastClaimK >= 0) {
+    claimed.set(id, { k: lastClaimK, at: lastClaimAt });
+    lastClaimK = -1;
+  }
   if (!lastLaunched) return;
   lastLaunched.boost = HOLD;
   heldBy.set(id, lastLaunched);
@@ -1188,6 +1259,20 @@ function release(id: string | number) {
   const f = heldBy.get(id);
   if (f) f.boost = 0;
   heldBy.delete(id);
+
+  const c = claimed.get(id);
+  claimed.delete(id);
+  if (!c || !hardcore || phase !== RESPOND || judged[c.k] <= 0) return;
+
+  // Timing was settled on press; height is settled here, on release.
+  const gave = ac.currentTime - c.at > HOLD_HIGH ? 1 : 0;
+  if (gave === hgt[c.k]) return;
+
+  // Half credit: the right unicorn at the wrong altitude was still recognised,
+  // just not delivered.
+  judged[c.k] *= 0.45;
+  flourish = heat();
+  say(herd[seq[c.k]].homeX, groundY - 88, gave ? "too high" : "too low", "rgba(255,200,130,.95)", 15);
 }
 
 function column(x: number) {
@@ -1227,6 +1312,19 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   if (phase === JAM) {
     if (inRect(x, y, restartBtn)) {
       phase = TITLE;
+      return;
+    }
+    if (inRect(x, y, shareBtn)) {
+      if (jamRec) {
+        jamRec = false;
+        if (jamTaps.length > 1) {
+          taps = jamTaps;
+          copyLink(location.origin + location.pathname + "#j." + encodeTaps(jamTaps), H * 0.5);
+        }
+      } else {
+        jamRec = true;
+        jamTaps = [];
+      }
       return;
     }
     slideCol.set(e.pointerId, column(x));
@@ -1273,13 +1371,20 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       enterJam();
       return;
     }
+    if (inRect(x, y, hardBtn)) {
+      hardcore = true;
+      startRun();
+      return;
+    }
     if (overHerd(y) && !inRect(x, y, playBtn) && !inRect(x, y, makeBtn) && !inRect(x, y, jamBtn)) {
       freePlay(column(x));
       grab(e.pointerId);
       return;
     }
     if (inRect(x, y, playBtn)) {
-      if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
+      hardcore = false;
+      if (sharedJam) playJam((ensureAudio(), ac.currentTime));
+      else if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
       else if (sharedIn) startChallenge();
       else startRun();
     }
@@ -1387,7 +1492,10 @@ function update(now: number) {
       schedIdx++;
     }
     while (visIdx < seq.length && now >= phaseAt + offs[visIdx] * BEAT) {
-      leap(seq[visIdx], 0.45 + flourish * 0.55);
+      // In hardcore the call shows the height too: a high note visibly soars, which is
+      // the only way the player can learn what to give back.
+      const f = leap(seq[visIdx], 0.45 + flourish * 0.55);
+      if (hgt[visIdx]) f.boost = HOLD * 1.2;
       visIdx++;
     }
 
@@ -1442,7 +1550,8 @@ function update(now: number) {
   }
 
   if (phase === REPLAY && now > replayEnd) {
-    phase = GRADE;
+    // A shared jam has no round behind it, so it lands back on the title.
+    phase = sharedJam ? TITLE : GRADE;
     phaseAt = now;
   }
 
@@ -1900,6 +2009,10 @@ function frame(nowMs: number) {
     ctx.stroke();
   }
 
+  // "lighter" sums channels, so a dense burst of mixed hues saturates to white by
+  // definition. "screen" approaches white asymptotically instead, so colours survive
+  // the pile-up.
+  ctx.globalCompositeOperation = "screen";
   for (let i = sparks.length - 1; i >= 0; i--) {
     const p = sparks[i];
     p.age += dt;
@@ -1913,7 +2026,7 @@ function frame(nowMs: number) {
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     const a = 1 - p.age / p.life;
-    ctx.fillStyle = p.white ? `rgba(255,255,255,${a * 0.9})` : `hsla(${p.hue},100%,68%,${a * 0.85})`;
+    ctx.fillStyle = p.white ? `rgba(255,255,255,${a * 0.8})` : `hsla(${p.hue},95%,62%,${a * 0.95})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, a * 3.5 + 0.6, 0, 6.284);
     ctx.fill();
@@ -1956,14 +2069,20 @@ function frame(nowMs: number) {
     text("Simon says repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
 
     // One obvious target. It breathes so it reads as the live thing on screen.
-    btn(playBtn, sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS") : "PLAY", undefined, GOLD);
+    btn(
+      playBtn,
+      sharedJam ? "HEAR THIS JAM" : sharedIn ? (taps.length ? "WATCH REPLAY" : "TRY THIS") : "PLAY",
+      undefined,
+      GOLD
+    );
     if (sharedIn)
       text("someone sent you this", W / 2, playBtn.y - 16, Math.min(15, W / 34), 0.45);
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
+    btn(hardBtn, "HARDCORE");
     btn(jamBtn, "JAM");
-    btn(makeBtn, "MAKE A PATTERN");
+    btn(makeBtn, "PATTERN");
 
     if (best) {
       text(
@@ -1991,6 +2110,9 @@ function frame(nowMs: number) {
   if (phase === JAM) {
     btn(restartBtn, "BACK", undefined, QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
+    btn(shareBtn, jamRec ? "STOP" : "REC", undefined, jamRec ? GOLD : QUIET);
+    if (jamRec) text(`recording — ${jamTaps.length} notes`, W / 2, H * 0.14 + 82, 13, 0.6);
+    else if (jamTaps.length > 1) text("link copied — send your jam", W / 2, H * 0.14 + 82, 13, 0.5);
     text("jam", W / 2, H * 0.14, 26, 0.8);
     text("no timer, no score — hold a unicorn to send it higher", W / 2, H * 0.14 + 26, 15, 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
@@ -2079,7 +2201,8 @@ function frame(nowMs: number) {
     const x0 = W / 2 - span / 2;
     for (let i = 0; i < n; i++) {
       ctx.beginPath();
-      ctx.arc(x0 + (offs[i] / beats) * span, dotY, i === cursor ? r + 2.5 : r, 0, 6.284);
+      const hr = hgt[i] ? r * 1.65 : r; // a high note is a bigger pip
+      ctx.arc(x0 + (offs[i] / beats) * span, dotY, i === cursor ? hr + 2.5 : hr, 0, 6.284);
       ctx.fillStyle = slotColor(i, cursor);
       ctx.fill();
     }
@@ -2192,7 +2315,7 @@ function frame(nowMs: number) {
 
   text(`${score}`, W / 2, 98 + topPad, 22, 0.7);
   text(
-    `${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
+    `${hardcore ? "HARDCORE   " : ""}${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
     W / 2,
     H - 18,
     14,
