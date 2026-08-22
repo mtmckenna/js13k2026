@@ -524,6 +524,15 @@ let compHard = false; // does the pattern being written use heights?
 
 // Where the hold actually changes anything. Normal play is deliberately one height:
 // holding does nothing, so there is exactly one thing to get right.
+// One leap shape for herd and player alike. They were on different formulas
+// (0.45+f*0.55 against 0.35+f) and the herd got 20% more boost than a player could
+// ever produce -- so in hardcore the demo could not be matched even in principle.
+// In hardcore the arc carries information, so it is canonical; elsewhere it may
+// still swell with flourish.
+function notePower() {
+  return hardcore ? 0.5 : 0.45 + flourish * 0.55;
+}
+
 function heightsLive() {
   return phase === JAM || (phase === COMPOSE && compHard) || (hardcore && phase !== TITLE);
 }
@@ -1015,8 +1024,45 @@ function composeTap(i: number) {
 // Copies the bare URL and nothing else. Copying a whole sentence means pasting prose
 // into a URL bar, and the old code also claimed success on paths where it had copied
 // nothing at all.
+// A real DOM input holding the link, parked under the copy button. Canvas text can't
+// be selected, and both clipboard APIs can silently no-op on iOS while reporting
+// success -- so the guaranteed path is showing you the URL to long-press yourself.
+const linkEl = document.createElement("input");
+linkEl.readOnly = true;
+linkEl.style.cssText =
+  "position:fixed;display:none;box-sizing:border-box;font:600 13px system-ui,-apple-system,sans-serif;" +
+  "padding:9px;border-radius:10px;border:1px solid rgba(255,255,255,.32);background:rgba(10,8,26,.92);" +
+  "color:#fff;text-align:center;-webkit-user-select:text;user-select:text;-webkit-touch-callout:default";
+document.body.appendChild(linkEl);
+linkEl.addEventListener("focus", () => linkEl.select());
+linkEl.addEventListener("click", () => linkEl.select());
+
+let linkShown = false;
+function showLink(on: boolean) {
+  if (on === linkShown && (!on || linkEl.value === shareUrl)) return;
+  linkShown = on;
+  if (!on) {
+    linkEl.style.display = "none";
+    return;
+  }
+  linkEl.value = shareUrl;
+  linkEl.style.left = copyBtn.x + "px";
+  linkEl.style.top = copyBtn.y + copyBtn.h + 34 + "px";
+  linkEl.style.width = copyBtn.w + "px";
+  linkEl.style.display = "block";
+}
+
 function doCopy() {
   copiedAt = ac ? ac.currentTime : 0;
+  // The share sheet is the reliable route on iOS -- it's the OS doing the sending,
+  // not a clipboard write we can't verify.
+  const nav = navigator as any;
+  try {
+    if (nav.share) {
+      nav.share({ title: "Unicorn Storm", url: shareUrl }).catch(() => {});
+      return;
+    }
+  } catch (e) {}
   copyLink(shareUrl, copyBtn.y - 18);
 }
 
@@ -1231,7 +1277,7 @@ function tap(i: number) {
       say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
     }
     flourish = heat();
-    leap(i, ok ? 0.35 + flourish : 0.2, ok);
+    leap(i, ok ? notePower() : 0.2, ok);
     return;
   }
 
@@ -1282,7 +1328,7 @@ function tap(i: number) {
 
   flourish = heat();
 
-  leap(i, right ? 0.35 + flourish : 0.2, right && timing > 0.3);
+  leap(i, right ? notePower() : 0.2, right && timing > 0.3);
 }
 
 // One place that decides what a note in column `col` means, so a slide behaves
@@ -1613,8 +1659,8 @@ function update(now: number) {
     while (visIdx < seq.length && now >= phaseAt + offs[visIdx] * BEAT) {
       // In hardcore the call shows the height too: a high note visibly soars, which is
       // the only way the player can learn what to give back.
-      const f = leap(seq[visIdx], 0.45 + flourish * 0.55);
-      if (hgt[visIdx]) f.boost = HOLD * 1.2;
+      const f = leap(seq[visIdx], notePower());
+      if (hgt[visIdx]) f.boost = HOLD; // exactly the lift a held note gets
       visIdx++;
     }
 
@@ -1953,9 +1999,17 @@ function slotColor(i: number, cursor: number) {
 // itself rather than in a toast that's gone before you look up.
 function drawCopy(now: number) {
   const fresh = now - copiedAt < 3;
+  const sharey = !!(navigator as any).share;
   text(shareWhat, W / 2, copyBtn.y - 14, 14, 0.5);
-  btn(copyBtn, fresh ? "COPIED — PASTE IT" : "COPY LINK", undefined, fresh ? PLAIN : GOLD);
-  if (fresh) text("send it to someone to try", W / 2, copyBtn.y + copyBtn.h + 20, 13, 0.45);
+  btn(copyBtn, sharey ? "SEND IT" : fresh ? "COPIED" : "COPY LINK", undefined, fresh && !sharey ? PLAIN : GOLD);
+  text(
+    sharey ? "or long-press the link below to copy it" : "or select the link below",
+    W / 2,
+    copyBtn.y + copyBtn.h + 22,
+    12,
+    0.42
+  );
+  showLink(true);
 }
 
 function text(s: string, x: number, y: number, size: number, alpha: number) {
@@ -2210,6 +2264,8 @@ function frame(nowMs: number) {
   }
 
   // --- hud ---
+  if (phase !== JAM && phase !== COMPOSE) showLink(false);
+
   if (phase === TITLE) {
     fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
     text("Simon says repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
@@ -2274,8 +2330,11 @@ function frame(nowMs: number) {
     btn(restartBtn, "BACK", undefined, QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     btn(shareBtn, jamRec ? "STOP" : "REC", undefined, jamRec ? GOLD : QUIET);
-    if (jamRec) text(`recording — ${jamTaps.length} notes`, W / 2, H * 0.14 + 82, 13, 0.6);
-    else if (shareUrl) drawCopy(now);
+    if (jamRec) {
+      text(`recording — ${jamTaps.length} notes`, W / 2, H * 0.14 + 82, 13, 0.6);
+      showLink(false);
+    } else if (shareUrl) drawCopy(now);
+    else showLink(false);
     text("jam", W / 2, H * 0.14, 26, 0.8);
     text("no timer, no score — hold a unicorn to send it higher", W / 2, H * 0.14 + 26, 15, 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
@@ -2338,6 +2397,7 @@ function frame(nowMs: number) {
     if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
     else if (!patternDone) text("DONE finishes it and gives you a link", W / 2, hintY, 12, 0.34);
     if (patternDone && shareUrl) drawCopy(now);
+    else showLink(false);
 
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     return;
