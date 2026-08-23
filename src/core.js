@@ -191,12 +191,32 @@ export function encodeJam(taps) {
   return "j." + encodeTaps(taps);
 }
 
-export function decodeRun(code) {
+// A name rides on the end after "~". Not "." -- encodeURIComponent leaves dots
+// alone, so a name containing one would split the code apart.
+export const NAME_MAX = 24;
+
+export function withName(code, name) {
+  const n = (name || "").trim().slice(0, NAME_MAX);
+  return n ? code + "~" + encodeURIComponent(n).replace(/~/g, "%7E") : code;
+}
+
+export function splitName(code) {
+  const i = code.indexOf("~");
+  if (i < 0) return { body: code, name: "" };
+  let name = "";
   try {
+    name = decodeURIComponent(code.slice(i + 1));
+  } catch (e) {}
+  return { body: code.slice(0, i), name: name.slice(0, NAME_MAX) };
+}
+
+export function decodeRun(raw) {
+  try {
+    const { body: code, name } = splitName(raw);
     if (code.slice(0, 2) === "j.") {
       const tp = decodeTaps(code.slice(2));
       if (!tp || tp.length < 2) return null;
-      return { jam: true, seq: [], offs: [], hgt: [], taps: tp };
+      return { jam: true, name, seq: [], offs: [], hgt: [], taps: tp };
     }
     const [a, g, t, h] = code.split(".");
     if (!a || a.length < 2) return null;
@@ -209,7 +229,7 @@ export function decodeRun(code) {
     const taps = decodeTaps(t || "");
     if (!taps) return null;
     const hgt = h ? h.split("").map(Number) : seq.map(() => 0);
-    return { jam: false, seq, offs, hgt, taps, hardcore: hgt.some((v) => v) };
+    return { jam: false, name, seq, offs, hgt, taps, hardcore: hgt.some((v) => v) };
   } catch (e) {
     return null;
   }

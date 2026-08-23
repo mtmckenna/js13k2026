@@ -30,6 +30,8 @@ import {
   timingScore,
   SONGS,
   songAt,
+  withName,
+  NAME_MAX,
   multFor,
   nextGap as coreGap,
   windowFor as coreWindow,
@@ -375,16 +377,16 @@ function resize() {
   makeBtn.x = r0 + (bw4 + 8) * 3;
 
   // Four across: hear it, wipe it, copy it, leave.
-  const cw = Math.min(120, (W - 60) / 4);
+  const cw = Math.min(120, (W - 44) / 4);
   const cy = groundY - 122;
   hearBtn.w = clearBtn.w = sendBtn.w = backBtn.w = cw;
   hearBtn.h = clearBtn.h = sendBtn.h = backBtn.h = 46;
   hearBtn.y = clearBtn.y = sendBtn.y = backBtn.y = cy;
-  const row = W / 2 - (cw * 4 + 24) / 2;
+  const row = W / 2 - (cw * 4 + 18) / 2;
   hearBtn.x = row;
-  clearBtn.x = row + cw + 8;
-  sendBtn.x = row + (cw + 8) * 2;
-  backBtn.x = row + (cw + 8) * 3;
+  clearBtn.x = row + cw + 6;
+  sendBtn.x = row + (cw + 6) * 2;
+  backBtn.x = row + (cw + 6) * 3;
 
 }
 addEventListener("resize", resize);
@@ -984,27 +986,49 @@ document.body.appendChild(linkEl);
 linkEl.addEventListener("focus", () => linkEl.select());
 linkEl.addEventListener("click", () => linkEl.select());
 
+// Typing needs a real input; canvas can't take text. Sits above the link and rewrites
+// it live, so what you read is what you'd send.
+const nameEl = document.createElement("input");
+nameEl.maxLength = NAME_MAX;
+nameEl.placeholder = "name it (optional)";
+nameEl.style.cssText =
+  "position:fixed;display:none;box-sizing:border-box;font:600 16px system-ui,-apple-system,sans-serif;" +
+  "padding:13px 10px;border-radius:12px;border:2px solid rgba(255,255,255,.28);background:rgba(10,8,26,.95);" +
+  "color:#fff;text-align:center;-webkit-user-select:text;user-select:text";
+document.body.appendChild(nameEl);
+
+let shareBody = "";
+nameEl.addEventListener("input", () => {
+  shareUrl = location.origin + location.pathname + "#" + withName(shareBody, nameEl.value);
+  if (linkShown) linkEl.value = shareUrl;
+});
+
 let linkShown = false;
 // Where the selectable link sits: under the copy panel in jam and compose, and in
 // the gap between the round-end panel and the herd during play.
 // Only jam and compose share now, so there is only one place this can sit.
+function nameTop() {
+  return copyBtn.y + 40;
+}
+
 function linkTop() {
-  return copyBtn.y + 50;
+  return copyBtn.y + 100;
 }
 
 function showLink(on: boolean) {
   if (on === linkShown && (!on || linkEl.value === shareUrl)) return;
   linkShown = on;
   if (!on) {
-    linkEl.style.display = "none";
+    linkEl.style.display = nameEl.style.display = "none";
     return;
   }
   const lw = Math.min(330, W - 36);
   linkEl.value = shareUrl;
-  linkEl.style.left = W / 2 - lw / 2 + "px";
+  linkEl.style.left = nameEl.style.left = W / 2 - lw / 2 + "px";
+  linkEl.style.width = nameEl.style.width = lw + "px";
   linkEl.style.top = linkTop() + "px";
-  linkEl.style.width = lw + "px";
-  linkEl.style.display = "block";
+  nameEl.style.top = nameTop() + "px";
+  linkEl.style.display = nameEl.style.display = "block";
 }
 
 function runUrl() {
@@ -1035,7 +1059,9 @@ function finishPattern() {
   if (seq.length < 2) return;
   taps = []; // a pattern is the challenge, not a performance
   patternDone = true;
-  shareUrl = runUrl();
+  shareBody = encodeRun();
+  nameEl.value = "";
+  shareUrl = location.origin + location.pathname + "#" + shareBody;
   shareWhat = `${seq.length} notes${compHard ? ", hardcore" : ""} — for someone to play back`;
 }
 
@@ -1358,7 +1384,9 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
         jamRec = false;
         if (jamTaps.length > 1) {
           taps = jamTaps;
-          shareUrl = location.origin + location.pathname + "#" + encodeJam(jamTaps);
+          shareBody = encodeJam(jamTaps);
+          nameEl.value = "";
+          shareUrl = location.origin + location.pathname + "#" + shareBody;
           shareWhat = `${jamTaps.length} notes, played by you`;
         }
       } else {
@@ -1993,7 +2021,7 @@ function copyRect() {
   hideBtn.w = copyBtn.w;
   hideBtn.h = 48;
   hideBtn.x = copyBtn.x;
-  hideBtn.y = copyBtn.y + 134;
+  hideBtn.y = copyBtn.y + 176;
   return copyBtn;
 }
 
@@ -2016,8 +2044,8 @@ function drawCopy() {
   // Name the thing being shared. "progress" is what a scored run has; a jam and a
   // pattern are objects you made.
   text(phase === JAM ? "share your jam!!" : "share your pattern!!", W / 2, copyBtn.y + 10, 18, 0.92);
-  text(shareWhat, W / 2, copyBtn.y + 32, 13, 0.5);
-  text("tap the link, then long-press to copy", W / 2, copyBtn.y + 122, 12, 0.42);
+  text(shareWhat, W / 2, copyBtn.y + 30, 13, 0.5);
+  text("tap the link, then long-press to copy", W / 2, copyBtn.y + 166, 12, 0.42);
   choice(hideBtn, "OK", "", true);
   showLink(true);
 }
@@ -2392,16 +2420,9 @@ function frame(nowMs: number) {
       showLink(false);
     } else if (shareUrl) drawCopy();
     else showLink(false);
-    text("jam", W / 2, H * 0.14, 26, 0.8);
-    text("tap for a hop, hold for a leap", W / 2, H * 0.14 + 26, Math.min(15, W / 25), 0.4);
-    // The storm gauge is the only readout: it IS how hard you're playing.
-    const gw = Math.min(220, W * 0.5);
-    ctx.fillStyle = "rgba(255,255,255,.1)";
-    ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw, 4);
-    ctx.fillStyle = `hsla(${45 + jamHeat * 160},90%,68%,${0.5 + jamHeat * 0.5})`;
-    ctx.fillRect(W / 2 - gw / 2, H * 0.14 + 44, gw * jamHeat, 4);
-    // It was an unlabelled bar, which is no better than no bar.
-    text("storm — keep playing to build it", W / 2, H * 0.14 + 64, 12, 0.32);
+    // No header, no gauge. The sky and the lightning already show the storm building,
+    // so the bar was saying twice what the weather says once -- and jam is the mode
+    // whose whole point is an uncluttered instrument.
     return;
   }
 
@@ -2452,7 +2473,7 @@ function frame(nowMs: number) {
     }
     const hintY = hearBtn.y + 82;
     if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
-    else if (!patternDone) text("DONE finishes it and gives you a link", W / 2, hintY, 12, 0.34);
+
     if (patternDone && shareUrl) drawCopy();
     else showLink(false);
 

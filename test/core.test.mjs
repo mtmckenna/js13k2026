@@ -271,3 +271,33 @@ test("a song prefix is a valid round, and encodes like any other pattern", () =>
   assert.deepEqual(back.seq, run.seq, "a partly-revealed song still shares as a link");
   assert.deepEqual(back.offs, run.offs);
 });
+
+// ----------------------------------------------------------------------- names
+test("a name survives the trip, punctuation and all", () => {
+  for (const name of ["Storm Riff", "a.b.c", "100% ~tilde~", "  padded  ", "emoji ok"]) {
+    const code = C.withName(C.encodeJam([{ i: 0, dt: 0 }, { i: 2, dt: 0.4 }]), name);
+    const back = C.decodeRun(code);
+    assert.ok(back, `${name}: should decode`);
+    assert.equal(back.name, name.trim().slice(0, C.NAME_MAX));
+    assert.equal(back.taps.length, 2, `${name}: the jam itself must still parse`);
+  }
+});
+
+test("a dot in the name doesn't split the code apart", () => {
+  // "." is legal in encodeURIComponent output, which is why the separator is "~".
+  const run = { seq: [0, 1, 2], offs: [0, 1, 2], hgt: [], taps: [] };
+  const back = C.decodeRun(C.withName(C.encodeRun(run), "v1.2.3"));
+  assert.deepEqual(back.seq, [0, 1, 2]);
+  assert.equal(back.name, "v1.2.3");
+});
+
+test("no name means no separator and no empty name", () => {
+  const code = C.encodeJam([{ i: 0, dt: 0 }, { i: 1, dt: 0.2 }]);
+  assert.equal(C.withName(code, "   "), code, "whitespace is not a name");
+  assert.equal(C.decodeRun(code).name, "");
+});
+
+test("names are capped so a link can't be padded out", () => {
+  const long = "x".repeat(200);
+  assert.equal(C.decodeRun(C.withName("j.000100", long)).name.length, C.NAME_MAX);
+});
