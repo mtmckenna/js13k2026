@@ -2022,18 +2022,40 @@ function frame(nowMs: number) {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // A sun that climbs out of the haze as the run goes well.
+  // A sun that climbs out of the haze as the run goes well. Cut from flat planes like
+  // everything else -- a soft radial glow was the one airbrushed thing on screen.
   if (lift > 0.04) {
-    const sx = W * 0.78;
+    const sx = W * 0.86; // clear of the round-end panel
     const sy = groundY - H * (0.12 + lift * 0.34);
-    const r = H * 0.16;
-    const sg = ctx.createRadialGradient(sx, sy, 2, sx, sy, r);
-    sg.addColorStop(0, `rgba(255,244,206,${lift * 0.6})`);
-    sg.addColorStop(0.35, `rgba(255,222,150,${lift * 0.26})`);
-    sg.addColorStop(1, "rgba(255,210,140,0)");
-    ctx.fillStyle = sg;
-    ctx.beginPath();
-    ctx.arc(sx, sy, r, 0, 6.284);
+    const r = H * 0.055;
+
+    // angular rays, alternating long and short
+    ctx.fillStyle = `rgba(255,226,150,${lift * 0.4})`;
+    for (let i = 0; i < 12; i++) {
+      const th = i * 0.5236;
+      const len = r * (i % 2 ? 2.1 : 1.55);
+      poly([
+        sx + Math.cos(th - 0.13) * r,
+        sy + Math.sin(th - 0.13) * r,
+        sx + Math.cos(th) * len,
+        sy + Math.sin(th) * len,
+        sx + Math.cos(th + 0.13) * r,
+        sy + Math.sin(th + 0.13) * r,
+      ]);
+      ctx.fill();
+    }
+
+    // faceted disc: a ten-gon, with one shaded plane along the lower edge
+    const face = [];
+    for (let i = 0; i < 10; i++) {
+      const th = i * 0.6283 + 0.31;
+      face.push(sx + Math.cos(th) * r, sy + Math.sin(th) * r);
+    }
+    poly(face);
+    ctx.fillStyle = `rgba(255,243,200,${Math.min(1, lift * 1.1)})`;
+    ctx.fill();
+    poly(face.slice(0, 12).concat([sx, sy]));
+    ctx.fillStyle = `rgba(255,214,132,${Math.min(1, lift * 0.9)})`;
     ctx.fill();
   }
 
