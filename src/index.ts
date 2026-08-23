@@ -1128,18 +1128,7 @@ function startChallenge() {
     restartArm = -1;
     newRound(ac.currentTime, true, true);
   };
-  if (ac.state === "running") go();
-  else {
-    let done = false;
-    const once = () => {
-      if (!done) {
-        done = true;
-        go();
-      }
-    };
-    ac.resume().then(once, once);
-    setTimeout(once, 400);
-  }
+  waitForClock(go);
 }
 
 function startRun() {
@@ -1161,21 +1150,21 @@ function startRun() {
     newRound(ac.currentTime, true);
   };
 
-  // On iOS a new AudioContext is suspended and currentTime does NOT advance until it
-  // is running. Anchoring the round to a parked clock froze the countdown mid-"3" and
-  // needed a second tap to shake loose. Wait for the clock to actually tick.
+  waitForClock(go);
+}
+
+// Anchoring a round to a stalled clock is how the game hangs: currentTime never
+// advances, so the countdown freezes and no note ever sounds, while every tap gets
+// swallowed by the resume guard. Keep trying, and give up cleanly rather than
+// starting on a clock that isn't running.
+function waitForClock(go: () => void, tries = 6) {
   if (ac.state === "running") {
     go();
-  } else {
-    let started = false;
-    const once = () => {
-      if (started) return;
-      started = true;
-      go();
-    };
-    ac.resume().then(once, once);
-    setTimeout(once, 400); // never hang if resume() refuses to settle
+    return;
   }
+  ensureAudio();
+  if (tries > 0) setTimeout(() => waitForClock(go, tries - 1), 180);
+  else starting = false; // the paused overlay explains it; another tap retries
 }
 
 function tap(i: number) {
@@ -1487,7 +1476,13 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
           history.replaceState(null, "", location.pathname + location.search);
         } catch (e) {}
         startRun();
-      } else phase = BRIEF;
+      } else {
+        // Unlock audio HERE. This was the only entry point that changed screens
+        // without touching the audio context, so hardcore reached BRING IT ON with
+        // nothing unlocked and had to create the context on a later gesture.
+        ensureAudio();
+        phase = BRIEF;
+      }
       return;
     }
     if (overHerd(y) && !inRect(x, y, playBtn) && !inRect(x, y, makeBtn) && !inRect(x, y, jamBtn)) {
@@ -2363,6 +2358,7 @@ function frame(nowMs: number) {
     text("rhythm arrives sooner. timing is unchanged.", W / 2, H * 0.2 + 162, small, 0.4);
     btn(goBtn, "BRING IT ON", undefined, GOLD);
     btn(restartBtn, "BACK", undefined, QUIET);
+    if (ac && ac.state !== "running") text("tap again to wake the sound", W / 2, H - 92, 14, 0.6);
     return;
   }
 
