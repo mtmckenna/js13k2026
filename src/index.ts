@@ -2348,7 +2348,9 @@ function frame(nowMs: number) {
     const small = Math.min(14, W / 32);
     text("TAP for a low hop", W / 2, H * 0.2 + 48, big, 0.92);
     text("HOLD for a high leap", W / 2, H * 0.2 + 76, big, 0.92);
-    text("the herd shows you which it wants — match it", W / 2, H * 0.2 + 112, small, 0.6);
+    // Name the thing you can actually see. "shows you which it wants" describes the
+    // rule; "how high each one jumps" describes the screen.
+    text("watch how high each one jumps, then copy it", W / 2, H * 0.2 + 112, small, 0.6);
     text("wrong height still scores, but only 45%", W / 2, H * 0.2 + 140, small, 0.4);
     text("rhythm arrives sooner. timing is unchanged.", W / 2, H * 0.2 + 162, small, 0.4);
     btn(goBtn, "BRING IT ON", undefined, GOLD);
