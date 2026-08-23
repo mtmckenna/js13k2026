@@ -959,6 +959,14 @@ linkEl.addEventListener("focus", () => linkEl.select());
 linkEl.addEventListener("click", () => linkEl.select());
 
 let linkShown = false;
+// Where the selectable link sits: under the copy panel in jam and compose, and in
+// the gap between the round-end panel and the herd during play.
+function linkTop() {
+  return phase === JAM || phase === COMPOSE
+    ? copyBtn.y + copyBtn.h + 34
+    : nextBtn.y + nextBtn.h + 30;
+}
+
 function showLink(on: boolean) {
   if (on === linkShown && (!on || linkEl.value === shareUrl)) return;
   linkShown = on;
@@ -966,10 +974,11 @@ function showLink(on: boolean) {
     linkEl.style.display = "none";
     return;
   }
+  const lw = Math.min(300, W - 60);
   linkEl.value = shareUrl;
-  linkEl.style.left = copyBtn.x + "px";
-  linkEl.style.top = copyBtn.y + copyBtn.h + 34 + "px";
-  linkEl.style.width = copyBtn.w + "px";
+  linkEl.style.left = W / 2 - lw / 2 + "px";
+  linkEl.style.top = linkTop() + "px";
+  linkEl.style.width = lw + "px";
   linkEl.style.display = "block";
 }
 
@@ -988,14 +997,11 @@ function doCopy() {
 }
 
 function copyLink(url: string, y: number) {
-  const done = (good: boolean) =>
-    say(
-      W / 2,
-      y,
-      good ? "link copied" : "couldn't copy",
-      good ? "rgba(180,255,210,1)" : "rgba(255,170,170,1)",
-      22
-    );
+  // Only failure needs announcing: on success the button already reads COPIED and the
+  // link is on screen, and the toast was landing behind the round-end panel.
+  const done = (good: boolean) => {
+    if (!good) say(W / 2, y, "couldn't copy — use the link below", "rgba(255,170,170,1)", 17);
+  };
   // execCommand first, not the async Clipboard API. On iOS the async path needs an
   // activation Safari accepts and can fail SILENTLY, so its rejection handler never
   // ran and the fallback never fired. The synchronous path returns a real boolean.
@@ -1510,7 +1516,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   if (inRect(x, y, shareBtn)) {
     shareUrl = runUrl();
     shareWhat = `your run — ${seq.length} notes, ${score} pts`;
-    copiedAt = -9;
+    doCopy();
     return;
   }
   restartArm = -1; // any tap elsewhere withdraws the offer
@@ -2528,7 +2534,14 @@ function frame(nowMs: number) {
     choice(againBtn, "HEAR IT AGAIN", "the herd plays it first", false);
     if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
     else choice(nextBtn, "NEXT!", "needs 50%", false, true);
-    if (shareUrl) drawCopy(now);
+
+    // The copy panel does NOT belong in here -- stacked under the choices it pushed
+    // its own heading behind NEXT! and buried the link off the bottom. In play,
+    // COPY in the utility row does the copying and the link appears below the panel.
+    if (shareUrl) {
+      showLink(true);
+      text("your link is below — long-press to copy", W / 2, linkTop() - 12, 12, 0.4);
+    }
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
