@@ -22,6 +22,25 @@ Load-bearing decisions, so they don't get undone by accident:
 
 Design notes live **outside this repo** in `../js13k2026-plan/`.
 
+## Tests
+
+`npm test` runs unit tests, builds, and smoke-tests the packed build. Run it before
+pushing -- push auto-deploys.
+
+- `src/core.js` holds the pure logic: share-link encoding, the difficulty ramp, timing
+  windows, scoring, and the launch/apex maths. It has no canvas, audio or DOM, so
+  `node --test` can assert on it directly. **`src/index.ts` imports it and must never
+  re-implement any of it** -- a second copy is a copy that drifts, and that is exactly
+  how the herd and the player ended up on different leap formulas.
+- `test/core.test.mjs` covers what has actually broken: link round-trips (including
+  heights and jam links), the ramp schedule, window tightening for off-beats, nearest
+  unclaimed slot selection, stray taps, heat weighting, and the physics invariants --
+  identical flight time and reach/slot on every screen, exactly two heights, and the
+  player's high apex equalling the herd's.
+- `scripts/smoke.js` drives `dist/index.html` in headless Chrome through every screen.
+  Unit tests cannot catch a bundle that throws on load, and `webpack.prod` mangles
+  property names, so a build can pass the size check and still be dead on arrival.
+
 ## Layout
 
 - `src/index.ts` — game code (entry point)

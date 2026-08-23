@@ -11,7 +11,10 @@
     "check-file-size": "node ./scripts/check-file-size.js",
     "build-zipped": "npm run build && npm run compress && node ./scripts/zip-file.js",
     "compress": "node ./scripts/compress-with-roadroller.js",
-    "party": "npm run build-zipped && npm run check-file-size"
+    "party": "npm run build-zipped && npm run check-file-size",
+    "test": "node --test test/*.test.mjs && npm run party && node scripts/smoke.js",
+    "test:unit": "node --test test/*.test.mjs",
+    "smoke": "node scripts/smoke.js"
   },
   "devDependencies": {
     "archiver": "^7.0.1",

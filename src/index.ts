@@ -9,6 +9,27 @@
 // its fellows and the walls, and falls through the floor. Positional recall depends on
 // the row staying put, and transient copies are far simpler than sending originals home.
 
+// Pure logic lives in core.js so node --test can assert on it directly. Nothing in
+// here may re-implement any of it -- a second copy is a copy that drifts.
+import {
+  BEAT,
+  BPM,
+  HIGH_F,
+  HOLD_HIGH,
+  WINDOW,
+  accuracyOf,
+  decodeRun as coreDecode,
+  encodeJam,
+  encodeRun as coreEncode,
+  flightFor,
+  heat as coreHeat,
+  judgeSlot,
+  launchParams,
+  multFor,
+  nextGap as coreGap,
+  windowFor as coreWindow,
+} from "./core.js";
+
 const NOTES = [261.63, 293.66, 329.63, 392.0, 440.0]; // C D E G A -- major pentatonic
 const HUES = [350, 35, 120, 205, 280];
 const VOICES = ["triangle", "sine", "triangle", "sine", "triangle"];
@@ -18,18 +39,8 @@ const COUNT = NOTES.length;
 // don't end up with ants and wall displays with giants.
 let SIZE = 1.55;
 let HIT = 59;
-
-// Flight time depends on the NOTE, never on the screen. It used to fall out of
-// sqrt(peak/G), which made arcs hang 18% longer on a tall display -- against a fixed
-// beat, that changed where every crossing happened.
-function flightFor(power: number) {
-  return 0.95 + power * 0.42;
-}
 const BOUNCE = 0.96;
 
-const BPM = 80;
-const BEAT = 60 / BPM;
-const WINDOW = 0.36; // how far off the beat still counts, in seconds
 // Ceremony is expensive. A 2-note phrase takes ~1.5s to play, so multi-bar
 // countdowns around it meant waiting far longer than playing.
 // Every countdown reads 3, 2, 1 -- the same shape before the herd plays and before
@@ -537,32 +548,13 @@ function notePower() {
 function heightsLive() {
   return phase === JAM || (phase === COMPOSE && compHard) || (hardcore && phase !== TITLE);
 }
-const HOLD_HIGH = 0.16;
 // Hardcore has exactly two arcs, so the player's must SNAP to them. Continuous lift
 // gave every intermediate height -- a 50ms tap already overshot the herd's low note,
 // and no hold reproduced its high one. Both sides now fly the identical path: launch
 // low, and if still held at HOLD_HIGH, convert to the one canonical high apex.
-const HIGH_F = 0.667; // held longer than this counts as asking for a high leap
-
-// Gap before the note being added. Straight quarter notes for a long time: the first
-// six notes are pure which-and-when, with no rhythm to learn on top. Held notes come
-// next because they are EASIER (more room), and off-beats only once you are deep in.
-function nextGap(len: number) {
-  if (len < 7) return 1;
-  const pool = len < 10 ? [1, 1, 1, 1, 2] : [1, 1, 1, 1, 2, 2, 0.5];
-  return pool[(Math.random() * pool.length) | 0];
-}
 
 function phraseBeats() {
   return offs[offs.length - 1];
-}
-
-// A half-beat gap is 375ms, so the flat +/-360ms window would swallow its neighbour.
-// Never let the window exceed 45% of the tightest gap in this phrase.
-function windowFor() {
-  let min = 9;
-  for (let i = 1; i < offs.length; i++) min = Math.min(min, offs[i] - offs[i - 1]);
-  return Math.min(WINDOW, min * BEAT * 0.48);
 }
 let round = 0;
 let best = 0; // longest phrase reached
@@ -619,72 +611,7 @@ let taps: { i: number; dt: number }[] = [];
 let replayEnd = 0;
 let sharedIn = false; // arrived via a shared replay link
 
-// Compact enough for a URL hash: notes as digits, gaps as one char each, and every
-// tap as a digit plus two base36 chars of 20ms units.
-function encodeTaps(list: { i: number; dt: number }[]) {
-  let t = "";
-  for (const p of list) {
-    const u = Math.min(1295, Math.max(0, Math.round(p.dt * 50)));
-    t += p.i + ("0" + u.toString(36)).slice(-2);
-  }
-  return t;
-}
-
-function encodeRun() {
-  let g = "";
-  for (let i = 1; i < offs.length; i++) {
-    const d = offs[i] - offs[i - 1];
-    g += d === 0.5 ? "0" : d === 2 ? "2" : "1";
-  }
-  const h = hgt.some((v) => v) ? "." + hgt.join("") : "";
-  return seq.join("") + "." + g + "." + encodeTaps(taps) + h;
-}
-
 let sharedJam = false;
-
-function decodeTaps(t: string) {
-  const tp: { i: number; dt: number }[] = [];
-  for (let i = 0; i + 2 < t.length; i += 3) {
-    const u = +t[i];
-    if (!(u >= 0 && u < COUNT)) return null;
-    tp.push({ i: u, dt: parseInt(t.slice(i + 1, i + 3), 36) / 50 });
-  }
-  return tp;
-}
-
-function decodeRun(code: string) {
-  try {
-    // "j.<taps>" is a recorded jam: a performance with no phrase behind it.
-    if (code.slice(0, 2) === "j.") {
-      const tp = decodeTaps(code.slice(2));
-      if (!tp || tp.length < 2) return false;
-      taps = tp;
-      seq = [];
-      offs = [];
-      sharedJam = true;
-      return true;
-    }
-    const [a, g, t, h] = code.split(".");
-    if (!a || a.length < 2) return false;
-    const q = a.split("").map(Number);
-    if (q.some((v) => !(v >= 0 && v < COUNT))) return false;
-    const o = [0];
-    for (let i = 0; i < g.length; i++) o.push(o[i] + (g[i] === "0" ? 0.5 : g[i] === "2" ? 2 : 1));
-    if (o.length !== q.length) return false;
-    const tp = decodeTaps(t);
-    if (!tp) return false;
-    seq = q;
-    offs = o;
-    taps = tp;
-    // A pattern that carries heights is a hardcore pattern, and says so by arriving.
-    hgt = h ? h.split("").map(Number) : q.map(() => 0);
-    hardcore = hgt.some((v) => v);
-    judged = seq.map(() => -1);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
 
 // Plays the round back exactly as it happened: the herd's phrase, then the attempt,
 // with its real timing errors intact. Hearing your own rushing is worth more than
@@ -726,7 +653,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
     } else if (round > 0) {
       streak++;
     }
-    mult = Math.min(5, 1 + streak * 0.5);
+    mult = multFor(streak);
   }
 
   if (keep) {
@@ -737,7 +664,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
     hgt = hardcore ? [(Math.random() * 2) | 0, (Math.random() * 2) | 0] : [0, 0];
   } else if (grow) {
     seq.push((Math.random() * COUNT) | 0);
-    offs.push(phraseBeats() + nextGap(seq.length));
+    offs.push(phraseBeats() + coreGap(seq.length, Math.random()));
     hgt.push(hardcore && Math.random() < 0.45 ? 1 : 0);
   }
 
@@ -757,18 +684,6 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
   flourish = accuracy; // the herd shows off in proportion to how you last did
   message = "";
   round++;
-}
-
-// How hard the game should be showing off right now. Accuracy alone maxes out on
-// the first correct note and leaves the spectacle nowhere to build, so weight it by
-// how deep into the phrase they are: "closer to getting it right" means both clean
-// AND nearly done.
-function heat() {
-  let sum = 0;
-  let n = 0;
-  for (const j of judged) if (j >= 0) (sum += j), n++;
-  if (!n) return 0;
-  return (sum / n) * (0.3 + 0.7 * (n / seq.length));
 }
 
 // Leaps queued for the future -- lets a celebration play out as a phrase rather
@@ -841,6 +756,30 @@ function celebrate(a: number, now: number) {
   }
 }
 
+function windowFor() {
+  return coreWindow(offs);
+}
+
+function heat() {
+  return coreHeat(judged, seq.length);
+}
+
+function encodeRun() {
+  return coreEncode({ seq, offs, hgt, taps });
+}
+
+function decodeRun(code: string) {
+  const r = coreDecode(code);
+  if (!r) return false;
+  seq = r.seq;
+  offs = r.offs;
+  hgt = r.hgt;
+  taps = r.taps;
+  sharedJam = !!r.jam;
+  hardcore = !!r.hardcore;
+  return true;
+}
+
 function respondStart() {
   return phaseAt + (phraseBeats() + REST) * BEAT;
 }
@@ -853,14 +792,8 @@ function respondStart() {
 let lastLaunched: Flyer = null;
 
 function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
-  const peak = H * (0.2 + power * 0.34); // height still reads against the screen
-  const flight = flightFor(power);
-  // Gravity is derived per leap so the flight lasts exactly `flight` everywhere.
-  const g = (8 * peak) / (flight * flight);
-  const vy = (4 * peak) / flight;
-  // Reach in HERD-SPACING units, not pixels: an arc always covers the same number of
-  // unicorns, so crossings line up the same on a phone as on a desktop.
-  const reach = slot * (2 + power * 2);
+  const { peak, flight, g, vy0, reach } = launchParams(H, slot, power);
+  const vy = -vy0;
   if (x + dir * reach < 40 || x + dir * reach > W - 40) dir = -dir;
 
   const ribbon = { hue, pts: [], age: 0, fat: 0.6 + power };
@@ -1290,21 +1223,12 @@ function tap(i: number) {
 
   // Slots are no longer evenly spaced, so find the nearest unclaimed one rather
   // than dividing by the beat.
-  let k = -1;
-  let bestOff = 1e9;
-  for (let j = 0; j < seq.length; j++) {
-    if (judged[j] >= 0) continue;
-    const d = Math.abs(now - (turnAt + offs[j] * BEAT));
-    if (d < bestOff) {
-      bestOff = d;
-      k = j;
-    }
-  }
   taps.push({ i, dt: now - turnAt });
 
   lastClaimK = -1;
   const win = windowFor();
-  if (k < 0 || bestOff > win) {
+  const { k } = judgeSlot(offs, judged, turnAt, now, win);
+  if (k < 0) {
     leap(i, 0.3);
     flourish = Math.max(0, flourish - 0.15);
     say(lx, ly, "extra", "rgba(255,255,255,.5)", 15);
@@ -1467,7 +1391,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       phase = TITLE;
       return;
     }
-    if (shareUrl && inRect(x, y, copyBtn)) {
+    if (shareUrl && inRect(x, y, copyRect())) {
       doCopy();
       return;
     }
@@ -1476,7 +1400,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
         jamRec = false;
         if (jamTaps.length > 1) {
           taps = jamTaps;
-          shareUrl = location.origin + location.pathname + "#j." + encodeTaps(jamTaps);
+          shareUrl = location.origin + location.pathname + "#" + encodeJam(jamTaps);
           shareWhat = `your jam — ${jamTaps.length} notes`;
           copiedAt = -9;
         }
@@ -1495,7 +1419,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   }
 
   if (phase === COMPOSE) {
-    if (patternDone && shareUrl && inRect(x, y, copyBtn)) {
+    if (patternDone && shareUrl && inRect(x, y, copyRect())) {
       doCopy();
       return;
     }
@@ -1542,7 +1466,13 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       return;
     }
     if (inRect(x, y, hardBtn)) {
-      phase = BRIEF;
+      if (sharedIn) {
+        // Arriving by link shouldn't be a dead end -- offer your own game too.
+        sharedIn = sharedJam = false;
+        hardcore = false;
+        seq = [];
+        startRun();
+      } else phase = BRIEF;
       return;
     }
     if (overHerd(y) && !inRect(x, y, playBtn) && !inRect(x, y, makeBtn) && !inRect(x, y, jamBtn)) {
@@ -1574,9 +1504,14 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     pokeRestart();
     return;
   }
+  if (shareUrl && inRect(x, y, copyRect())) {
+    doCopy();
+    return;
+  }
   if (inRect(x, y, shareBtn)) {
     shareUrl = runUrl();
-    doCopy();
+    shareWhat = `your run — ${seq.length} notes, ${score} pts`;
+    copiedAt = -9;
     return;
   }
   restartArm = -1; // any tap elsewhere withdraws the offer
@@ -1701,13 +1636,11 @@ function update(now: number) {
     // metronome keeps running so the tempo is alive whenever they do start.
     const endAt = turnAt < 0 ? Infinity : turnAt + phraseBeats() * BEAT + windowFor();
     if (now > endAt) {
-      let sum = 0;
       for (let i = 0; i < seq.length; i++) {
-        sum += Math.max(0, judged[i]);
         // Name the notes that never got played -- silence is the least readable failure.
         if (judged[i] < 0) say(herd[seq[i]].homeX, groundY - 44, "missed", "rgba(255,110,120,.85)", 15);
       }
-      accuracy = sum / seq.length;
+      accuracy = accuracyOf(judged, seq.length);
       phase = GRADE;
       phaseAt = now;
 
@@ -1913,7 +1846,11 @@ const LOCKED = 2;
 const QUIET = 3;
 
 // Letters knocked off true, one at a time. HARDCORE should look like it's shouting.
-function wonky(str: string, cx: number, cy: number, size: number, col: string) {
+function wonkyHard() {
+  wonky("HARDCORE", hardBtn.x + hardBtn.w / 2, hardBtn.y + 30, Math.min(17, hardBtn.w / 7.4), "", true);
+}
+
+function wonky(str: string, cx: number, cy: number, size: number, col: string, bow?: boolean) {
   ctx.letterSpacing = "0px";
   ctx.font = `800 ${size}px system-ui,-apple-system,sans-serif`;
   ctx.textAlign = "center";
@@ -1922,6 +1859,7 @@ function wonky(str: string, cx: number, cy: number, size: number, col: string) {
   for (let i = 0; i < str.length; i++) {
     const w = ctx.measureText(str[i]).width;
     ctx.save();
+    if (bow) ctx.fillStyle = `hsl(${(i / str.length) * 320},92%,66%)`;
     ctx.translate(x + w / 2, cy + Math.sin(i * 1.9) * 2.4);
     ctx.rotate(Math.sin(i * 2.3 + 1) * 0.3);
     ctx.fillText(str[i], 0, 0);
@@ -2014,7 +1952,15 @@ function slotColor(i: number, cursor: number) {
 
 // The share affordance. Says what it will hand over, and confirms on the button
 // itself rather than in a toast that's gone before you look up.
+// The panel sits in different places per screen, so one function owns the position
+// and both drawing and hit-testing read it. Behaviour is identical everywhere.
+function copyRect() {
+  copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : replayBtn.y + 62;
+  return copyBtn;
+}
+
 function drawCopy(now: number) {
+  copyRect();
   const fresh = now - copiedAt < 3;
   const sharey = !!(navigator as any).share;
   text(shareWhat, W / 2, copyBtn.y - 14, 14, 0.5);
@@ -2285,7 +2231,7 @@ function frame(nowMs: number) {
   }
 
   // --- hud ---
-  if (phase !== JAM && phase !== COMPOSE) showLink(false);
+  if (phase !== JAM && phase !== COMPOSE && phase !== GRADE) showLink(false);
 
   if (phase === TITLE) {
     fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
@@ -2303,8 +2249,11 @@ function frame(nowMs: number) {
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
-    btn(hardBtn, "");
-    wonky("HARDCORE", hardBtn.x + hardBtn.w / 2, hardBtn.y + 30, Math.min(17, hardBtn.w / 7.4), "rgba(255,255,255,.95)");
+    if (sharedIn) btn(hardBtn, "NEW GAME");
+    else {
+      btn(hardBtn, "");
+      wonkyHard();
+    }
     btn(jamBtn, "JAM");
     btn(makeBtn, "PATTERN");
 
@@ -2332,7 +2281,7 @@ function frame(nowMs: number) {
   }
 
   if (phase === BRIEF) {
-    wonky("HARDCORE", W / 2, H * 0.2, Math.min(52, W / 9), "rgba(255,255,255,.96)");
+    wonky("HARDCORE", W / 2, H * 0.2, Math.min(52, W / 9), "", true);
     const lines = [
       "notes now come at two heights",
       "TAP for a low hop  ·  HOLD for a high leap",
@@ -2542,6 +2491,7 @@ function frame(nowMs: number) {
 
     btn(blindBtn, "NO PREVIEW", undefined, QUIET);
     btn(replayBtn, "REPLAY", undefined, QUIET);
+    if (shareUrl) drawCopy(now);
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
