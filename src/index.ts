@@ -1661,7 +1661,14 @@ function update(now: number) {
 
   // Runs wherever there's playing to do -- not while a round-end screen waits on you.
   const beatLive =
-    phase === CALL || phase === RESPOND ? true : (phase === COMPOSE || phase === JAM) && freeBeat;
+    // Silent until you actually start your turn. The screen promises "the beat starts
+    // on your first note", and clicking before that both contradicts it and beats out
+    // the CALL's grid -- which gets thrown away the moment you tap and re-anchor.
+    phase === CALL
+      ? true
+      : phase === RESPOND
+      ? turnAt >= 0
+      : (phase === COMPOSE || phase === JAM) && freeBeat;
   if (beatOn && beatLive) {
     for (;;) {
       const at = pulseAt + clickIdx * BEAT;
@@ -2260,7 +2267,14 @@ function frame(nowMs: number) {
   // rhythm isn't carried by the click alone.
   let pulse = 0;
   const pulseLive =
-    phase === CALL || phase === RESPOND ? true : (phase === COMPOSE || phase === JAM) && freeBeat;
+    // Silent until you actually start your turn. The screen promises "the beat starts
+    // on your first note", and clicking before that both contradicts it and beats out
+    // the CALL's grid -- which gets thrown away the moment you tap and re-anchor.
+    phase === CALL
+      ? true
+      : phase === RESPOND
+      ? turnAt >= 0
+      : (phase === COMPOSE || phase === JAM) && freeBeat;
   if (ac && beatOn && pulseLive) {
     const ph = ((now - pulseAt) / BEAT) % 1;
     pulse = Math.max(0, 1 - (ph < 0 ? ph + 1 : ph) * 3);
@@ -2363,7 +2377,9 @@ function frame(nowMs: number) {
     // rule; "how high each one jumps" describes the screen.
     text("watch how high each one jumps, then copy it", W / 2, H * 0.2 + 112, small, 0.6);
     text("wrong height still scores, but only 45%", W / 2, H * 0.2 + 140, small, 0.4);
-    text("rhythm arrives sooner. timing is unchanged.", W / 2, H * 0.2 + 162, small, 0.4);
+    // Says the only thing a player needs from this line. The specifics -- gaps at 4
+    // notes instead of 7, off-beats at 6 instead of 10 -- are felt, not read.
+    text("and it gets harder faster", W / 2, H * 0.2 + 162, small, 0.4);
     btn(goBtn, "BRING IT ON", undefined, GOLD);
     btn(restartBtn, "BACK", undefined, QUIET);
     if (ac && ac.state !== "running") text("tap again to wake the sound", W / 2, H - 92, 14, 0.6);
