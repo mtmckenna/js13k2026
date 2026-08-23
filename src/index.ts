@@ -989,7 +989,7 @@ let linkShown = false;
 // the gap between the round-end panel and the herd during play.
 // Only jam and compose share now, so there is only one place this can sit.
 function linkTop() {
-  return copyBtn.y + copyBtn.h + 34;
+  return copyBtn.y + 50;
 }
 
 function showLink(on: boolean) {
@@ -1036,7 +1036,7 @@ function finishPattern() {
   taps = []; // a pattern is the challenge, not a performance
   patternDone = true;
   shareUrl = runUrl();
-  shareWhat = `your pattern — ${seq.length} notes`;
+  shareWhat = `${seq.length} notes${compHard ? ", hardcore" : ""} — for someone to play back`;
 }
 
 // Retry the same phrase without sitting through the herd playing it again. Once you
@@ -1358,7 +1358,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
         if (jamTaps.length > 1) {
           taps = jamTaps;
           shareUrl = location.origin + location.pathname + "#" + encodeJam(jamTaps);
-          shareWhat = `your jam — ${jamTaps.length} notes`;
+          shareWhat = `${jamTaps.length} notes, played by you`;
         }
       } else {
         jamRec = true;
@@ -1966,16 +1966,17 @@ function layoutUtils() {
   }
 }
 
+// Laid out like the round-end panel: a scrim, a heading, the thing itself, and one
+// full-width button to close it. The dismiss was a lone octagon floating beside the
+// text, belonging to nothing.
 function copyRect() {
-  copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : nextBtn.y + nextBtn.h + 22;
-  // Narrower than before to make room for a dismiss: after STOP in jam the panel had
-  // no way out at all, and it sat over the herd you were trying to play.
-  copyBtn.w = Math.min(238, W - 116);
-  copyBtn.x = (W - copyBtn.w - 52) / 2;
-  hideBtn.w = 44;
-  hideBtn.h = copyBtn.h;
-  hideBtn.x = copyBtn.x + copyBtn.w + 8;
-  hideBtn.y = copyBtn.y;
+  copyBtn.y = (phase === JAM ? H * 0.14 : H * 0.16) + 84;
+  copyBtn.w = Math.min(330, W - 36);
+  copyBtn.x = (W - copyBtn.w) / 2;
+  hideBtn.w = copyBtn.w;
+  hideBtn.h = 48;
+  hideBtn.x = copyBtn.x;
+  hideBtn.y = copyBtn.y + 134;
   return copyBtn;
 }
 
@@ -1990,10 +1991,17 @@ function dismissShare() {
 // the feature: on screen, selectable, and long-press copies it verbatim.
 function drawCopy() {
   copyRect();
-  btn(hideBtn, "✕", undefined, QUIET);
-  text("share your progress!!", W / 2, copyBtn.y + 6, 18, 0.9);
-  text(shareWhat, W / 2, copyBtn.y + 28, 13, 0.45);
-    text("tap it, then long-press to copy", W / 2, copyBtn.y + 48, 12, 0.42);
+  const py = copyBtn.y - 14;
+  rrect(copyBtn.x - 14, py, copyBtn.w + 28, hideBtn.y + hideBtn.h + 14 - py, 26);
+  ctx.fillStyle = "rgba(12,9,28,.74)";
+  ctx.fill();
+
+  // Name the thing being shared. "progress" is what a scored run has; a jam and a
+  // pattern are objects you made.
+  text(phase === JAM ? "share your jam!!" : "share your pattern!!", W / 2, copyBtn.y + 10, 18, 0.92);
+  text(shareWhat, W / 2, copyBtn.y + 32, 13, 0.5);
+  text("tap the link, then long-press to copy", W / 2, copyBtn.y + 122, 12, 0.42);
+  choice(hideBtn, "OK", "done sharing", true);
   showLink(true);
 }
 
