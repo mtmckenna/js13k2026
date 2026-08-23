@@ -1107,9 +1107,17 @@ function retryBlind(now: number) {
   round++;
 }
 
+// startRun/startChallenge wait for the audio clock to actually tick before anchoring
+// a round, which can take a few frames. The title keeps drawing during that wait, so
+// clearing sharedIn first meant a flash of the ordinary title on the way out of
+// someone's link. Hold the title back until the round is really underway.
+let starting = false;
+
 function startChallenge() {
   ensureAudio();
+  starting = true;
   const go = () => {
+    starting = false;
     score = 0;
     streak = 0;
     mult = 1;
@@ -1138,7 +1146,9 @@ function startRun() {
   ensureAudio();
   hgt = [];
 
+  starting = true;
   const go = () => {
+    starting = false;
     seq = [];
     score = 0;
     accuracy = 0;
@@ -2282,6 +2292,7 @@ function frame(nowMs: number) {
   if (phase !== JAM && phase !== COMPOSE && phase !== GRADE) showLink(false);
 
   if (phase === TITLE) {
+    if (starting) return; // a run is spinning up; don't flash the menu on the way out
     fitText("UNICORN STORM", W / 2, H * 0.24, W * 0.84, 68, 0.96);
     text("Simon says repeat after the unicorns", W / 2, H * 0.24 + 42, Math.min(19, W / 27), 0.55);
 
