@@ -340,14 +340,17 @@ function resize() {
   goBtn.y = H * 0.2 + 196;
 
   // End-of-round choice, side by side and equally reachable.
-  const gw = Math.min(168, (W - 56) / 2);
-  const gh = 56;
+  // Stacked, full width, in the order you'd want them: have another go, hear it
+  // first, or move on. Side by side they read as unrelated; a column reads as a list.
+  const gw = Math.min(352, W - 56);
+  const gh = 50;
   const gy = H * 0.2 + 76;
-  againBtn.w = nextBtn.w = gw;
-  againBtn.h = nextBtn.h = gh;
-  againBtn.y = nextBtn.y = gy;
-  againBtn.x = W / 2 - gw - 8;
-  nextBtn.x = W / 2 + 8;
+  blindBtn.w = againBtn.w = nextBtn.w = gw;
+  blindBtn.h = againBtn.h = nextBtn.h = gh;
+  blindBtn.x = againBtn.x = nextBtn.x = W / 2 - gw / 2;
+  blindBtn.y = gy;
+  againBtn.y = gy + gh + 10;
+  nextBtn.y = gy + (gh + 10) * 2;
 
   const bw3 = Math.min(150, (W - 64) / 3);
   jamBtn.w = makeBtn.w = hardBtn.w = bw3;
@@ -369,12 +372,6 @@ function resize() {
   sendBtn.x = row + (cw + 8) * 2;
   backBtn.x = row + (cw + 8) * 3;
 
-  const sw = Math.min(168, (W - 56) / 2);
-  blindBtn.w = replayBtn.w = sw;
-  blindBtn.h = replayBtn.h = 40;
-  blindBtn.y = replayBtn.y = gy + gh + 12;
-  blindBtn.x = W / 2 - sw - 8;
-  replayBtn.x = W / 2 + 8;
 }
 addEventListener("resize", resize);
 addEventListener("orientationchange", resize);
@@ -1524,7 +1521,6 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     if (now < phaseAt + 0.4) return;
     if (inRect(x, y, againBtn)) newRound(now, false);
     else if (grew && inRect(x, y, nextBtn)) newRound(now, true);
-    else if (inRect(x, y, replayBtn)) startReplay(now);
     else if (inRect(x, y, blindBtn)) retryBlind(now);
     return;
   }
@@ -1579,6 +1575,7 @@ addEventListener("keydown", (e: KeyboardEvent) => {
     if (now < phaseAt + 0.4) return;
     if (e.key === "Enter" || e.key === " ") newRound(now, grew);
     else if (e.key.toLowerCase() === "a") newRound(now, false);
+    else if (e.key.toLowerCase() === "g") retryBlind(now);
     else if (e.key.toLowerCase() === "r") pokeRestart();
     return;
   }
@@ -1983,7 +1980,7 @@ function layoutUtils() {
 }
 
 function copyRect() {
-  copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : replayBtn.y + 62;
+  copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : nextBtn.y + nextBtn.h + 22;
   return copyBtn;
 }
 
@@ -2519,7 +2516,7 @@ function frame(nowMs: number) {
     // Scrim: at high scores the celebration is bright enough to swallow the UI.
     const pw = Math.min(W - 32, 520);
     const py = H * 0.2 - 42;
-    rrect((W - pw) / 2, py, pw, replayBtn.y + replayBtn.h + 16 - py, 26);
+    rrect((W - pw) / 2, py, pw, nextBtn.y + nextBtn.h + 16 - py, 26);
     ctx.fillStyle = "rgba(12,9,28,.62)";
     ctx.fill();
 
@@ -2527,15 +2524,10 @@ function frame(nowMs: number) {
     text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
     if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
 
-    // Two real options. Whichever suits the result is highlighted, but both are
-    // always available -- replaying a phrase you nailed is a legitimate choice,
-    // and so is pressing on after a scrappy one.
-    choice(againBtn, "HEAR IT AGAIN", "same phrase", !grew);
-    if (grew) choice(nextBtn, "NEXT", "one note longer", true);
-    else choice(nextBtn, "NEXT", "needs 50%", false, true);
-
-    btn(blindBtn, "NO PREVIEW", undefined, QUIET);
-    btn(replayBtn, "REPLAY", undefined, QUIET);
+    choice(blindBtn, "TRY AGAIN", "same phrase, play now", !grew);
+    choice(againBtn, "HEAR IT AGAIN", "the herd plays it first", false);
+    if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
+    else choice(nextBtn, "NEXT!", "needs 50%", false, true);
     if (shareUrl) drawCopy(now);
   }
 
