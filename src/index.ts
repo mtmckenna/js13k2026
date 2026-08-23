@@ -2565,9 +2565,12 @@ function frame(nowMs: number) {
     text(`audio: ${ac.state}`, W / 2, H * 0.46 + 56, 13, 0.35);
   }
 
-  text(`${score}`, W / 2, 98 + topPad, 22, 0.7);
   text(
-    `${hardcore ? "HARDCORE   " : ""}${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
+    // Everything about the run on one line, each part labelled. An unlabelled number
+    // floating at the top told you nothing and collided with the round-end panel.
+    `${hardcore ? "HARDCORE   " : ""}${score} pts   ${seq.length} notes${
+      mult > 1 ? `   x${mult.toFixed(1)}` : ""
+    }   best ${best}`,
     W / 2,
     H - 16,
     14,
