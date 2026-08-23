@@ -1482,10 +1482,15 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     }
     if (inRect(x, y, hardBtn)) {
       if (sharedIn) {
-        // Arriving by link shouldn't be a dead end -- offer your own game too.
+        // Arriving by link shouldn't be a dead end -- offer your own game too. Drop
+        // the hash with it, or the address bar still claims to be their run and a
+        // reload drags you back into it.
         sharedIn = sharedJam = false;
         hardcore = false;
         seq = [];
+        try {
+          history.replaceState(null, "", location.pathname + location.search);
+        } catch (e) {}
         startRun();
       } else phase = BRIEF;
       return;
