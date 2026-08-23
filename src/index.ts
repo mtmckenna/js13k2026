@@ -2026,6 +2026,17 @@ function copyRect() {
 }
 
 function dismissShare() {
+  // Try the clipboard on the way out, but never claim it worked. The API can no-op
+  // silently on iOS, which is what made the old COPIED button a liar -- so success
+  // speaks and failure stays quiet, and the link was on screen either way.
+  try {
+    const nav = navigator as any;
+    if (nav.clipboard && nav.clipboard.writeText)
+      nav.clipboard.writeText(shareUrl).then(
+        () => say(W / 2, H * 0.42, "link copied", "rgba(180,255,210,1)", 20),
+        () => {}
+      );
+  } catch (e) {}
   shareUrl = "";
   showLink(false);
 }
