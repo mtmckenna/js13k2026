@@ -2373,13 +2373,10 @@ function frame(nowMs: number) {
     const small = Math.min(14, W / 32);
     text("TAP for a low hop", W / 2, H * 0.2 + 48, big, 0.92);
     text("HOLD for a high leap", W / 2, H * 0.2 + 76, big, 0.92);
-    // Name the thing you can actually see. "shows you which it wants" describes the
-    // rule; "how high each one jumps" describes the screen.
-    text("watch how high each one jumps, then copy it", W / 2, H * 0.2 + 112, small, 0.6);
-    text("wrong height still scores, but only 45%", W / 2, H * 0.2 + 140, small, 0.4);
-    // Says the only thing a player needs from this line. The specifics -- gaps at 4
-    // notes instead of 7, off-beats at 6 instead of 10 -- are felt, not read.
-    text("and it gets harder faster", W / 2, H * 0.2 + 162, small, 0.4);
+    // One line. The scoring detail and the steeper ramp are both discoverable by
+    // playing, and spelling them out here was three lines nobody needed before
+    // they'd tried it once.
+    text("match the jump height", W / 2, H * 0.2 + 116, Math.min(17, W / 25), 0.6);
     btn(goBtn, "BRING IT ON", undefined, GOLD);
     btn(restartBtn, "BACK", undefined, QUIET);
     if (ac && ac.state !== "running") text("tap again to wake the sound", W / 2, H - 92, 14, 0.6);
