@@ -2027,18 +2027,31 @@ function copyRect() {
   return copyBtn;
 }
 
+// Diagnostic for the iOS clipboard question. Reports what the browser actually
+// offers and what the last attempt did, rather than guessing.
+let copyDiag = "";
+
 function dismissShare() {
   // Try the clipboard on the way out, but never claim it worked. The API can no-op
   // silently on iOS, which is what made the old COPIED button a liar -- so success
   // speaks and failure stays quiet, and the link was on screen either way.
+  const nav = navigator as any;
+  const secure = (window as any).isSecureContext;
+  const hasApi = !!(nav.clipboard && nav.clipboard.writeText);
+  copyDiag = `${location.protocol} secure:${secure ? "y" : "n"} api:${hasApi ? "y" : "n"}`;
   try {
-    const nav = navigator as any;
-    if (nav.clipboard && nav.clipboard.writeText)
+    if (hasApi)
       nav.clipboard.writeText(shareUrl).then(
-        () => say(W / 2, H * 0.42, "link copied", "rgba(180,255,210,1)", 20),
-        () => {}
+        () => {
+          copyDiag += " write:ok";
+          say(W / 2, H * 0.42, "link copied", "rgba(180,255,210,1)", 20);
+        },
+        (e: any) => (copyDiag += " write:" + (e && e.name ? e.name : "rejected"))
       );
-  } catch (e) {}
+    else copyDiag += " (no api -- needs https)";
+  } catch (e: any) {
+    copyDiag += " threw:" + (e && e.name);
+  }
   shareUrl = "";
   showLink(false);
 }
@@ -2343,6 +2356,7 @@ function frame(nowMs: number) {
 
   // --- hud ---
   layoutUtils();
+  if (copyDiag) text(copyDiag, W / 2, H - 96, 12, 0.75);
   if (phase !== JAM && phase !== COMPOSE) showLink(false);
 
   if (phase === TITLE) {
