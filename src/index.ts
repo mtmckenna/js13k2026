@@ -213,7 +213,7 @@ function drawCloud(c: Cloud, lift: number) {
   for (let i = 0; i < top.length; i += 2) pts.push(top[i] * w, top[i + 1] * h);
   pts.push(w * 0.5, h * 0.3, -w * 0.5, h * 0.3); // the flat underside
   poly(pts);
-  ctx.fillStyle = `hsla(214,40%,${64 + lift * 14}%,${c.a})`;
+  ctx.fillStyle = `hsla(${214 - lift * 26},40%,${64 + lift * 14}%,${c.a * (1 - lift * 0.5)})`;
   ctx.fill();
 
   // One lit plane across the upper humps, as if the light is above and behind.
@@ -225,7 +225,7 @@ function drawCloud(c: Cloud, lift: number) {
     0.13 * w, -0.28 * h,
     -0.18 * w, -0.18 * h,
   ]);
-  ctx.fillStyle = `hsla(203,58%,${79 + lift * 12}%,${c.a * 0.6})`;
+  ctx.fillStyle = `hsla(${203 - lift * 40},58%,${79 + lift * 14}%,${c.a * 0.6 * (1 - lift * 0.55)})`;
   ctx.fill();
 
   ctx.restore();
@@ -699,7 +699,7 @@ function celebrate(a: number, now: number) {
 
   if (a >= 0.95) {
     // The storm. Rainbows, fireworks, and unicorns erupting the length of the field.
-    strike(1);
+    flashA = Math.max(flashA, 0.55); // a blaze, not a bolt
     for (let i = 0; i < 3; i++) rainbow(W * (0.18 + 0.32 * i), groundY, W * (0.3 + 0.11 * i), 2.8);
 
     for (let i = 0; i < 5; i++) {
@@ -1998,15 +1998,44 @@ function frame(nowMs: number) {
     flourish = jamHeat;
   }
 
-  // Dusk sky rather than the flat purple: deep overhead, warming toward the horizon,
-  // and still dark enough that the additive ribbons and fireworks read against it.
+  // Playing well BURNS OFF the storm: the sky lifts from a dark squall toward a warm
+  // clear evening, the cloud bank thins, and the lightning backs off. The herd is
+  // driving the weather away rather than summoning it.
   const lift = phase === TITLE ? 0 : flourish;
   const sky = ctx.createLinearGradient(0, 0, 0, groundY);
-  sky.addColorStop(0, `hsl(230,58%,${9 + lift * 7}%)`);
-  sky.addColorStop(0.55, `hsl(216,52%,${19 + lift * 10}%)`);
-  sky.addColorStop(1, `hsl(198,48%,${31 + lift * 13}%)`);
+  // Two gradients cross-faded, NOT one gradient with interpolated hue: blue 198 to
+  // gold 40 travels through green, which turned the horizon lime. Alpha blending goes
+  // straight there. Clearing evening, not midday -- the additive ribbons need
+  // something darker than daylight to read against.
+  sky.addColorStop(0, "hsl(230,58%,9%)");
+  sky.addColorStop(0.55, "hsl(216,52%,19%)");
+  sky.addColorStop(1, "hsl(198,48%,31%)");
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, H);
+
+  if (lift > 0.01) {
+    const warm = ctx.createLinearGradient(0, 0, 0, groundY);
+    warm.addColorStop(0, `hsla(226,46%,22%,${lift})`);
+    warm.addColorStop(0.55, `hsla(24,44%,34%,${lift * 0.85})`);
+    warm.addColorStop(1, `hsla(34,68%,52%,${lift * 0.9})`);
+    ctx.fillStyle = warm;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // A sun that climbs out of the haze as the run goes well.
+  if (lift > 0.04) {
+    const sx = W * 0.78;
+    const sy = groundY - H * (0.12 + lift * 0.34);
+    const r = H * 0.16;
+    const sg = ctx.createRadialGradient(sx, sy, 2, sx, sy, r);
+    sg.addColorStop(0, `rgba(255,244,206,${lift * 0.6})`);
+    sg.addColorStop(0.35, `rgba(255,222,150,${lift * 0.26})`);
+    sg.addColorStop(1, "rgba(255,210,140,0)");
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, 6.284);
+    ctx.fill();
+  }
 
   for (const c of clouds) {
     c.x -= c.v * dt;
@@ -2014,8 +2043,9 @@ function frame(nowMs: number) {
     drawCloud(c, lift);
   }
 
-  // Storm cadence: ~3-8s apart when you're struggling, ~1-2.5s at full flourish.
-  const weather = phase === TITLE ? 0.12 : flourish;
+  // Inverted deliberately: the storm is the thing you are driving off. Frequent and
+  // bright while you are struggling, near-still once the run is clean.
+  const weather = phase === TITLE ? 0.3 : 1 - flourish;
   boltTimer -= dt;
   if (boltTimer <= 0) {
     strike(0.2 + weather * 0.8);
