@@ -279,6 +279,7 @@ const homeBtn = { x: 0, y: 0, w: 0, h: 0 };
 const goBtn = { x: 0, y: 0, w: 0, h: 0 };
 const songBtn = { x: 0, y: 0, w: 0, h: 0 };
 const songSlot = { x: 0, y: 0, w: 0, h: 0 };
+const hideBtn = { x: 0, y: 0, w: 0, h: 0 };
 
 // One rect reused per row, so the picker costs no extra state.
 function songRect(i: number) {
@@ -1419,6 +1420,10 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       doCopy();
       return;
     }
+    if (shareUrl && inRect(x, y, hideBtn)) {
+      dismissShare();
+      return;
+    }
     if (inRect(x, y, shareBtn)) {
       if (jamRec) {
         jamRec = false;
@@ -1445,6 +1450,10 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   if (phase === COMPOSE) {
     if (patternDone && shareUrl && inRect(x, y, copyRect())) {
       doCopy();
+      return;
+    }
+    if (patternDone && shareUrl && inRect(x, y, hideBtn)) {
+      dismissShare();
       return;
     }
     if (inRect(x, y, shareBtn)) {
@@ -1563,6 +1572,10 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   }
   if (shareUrl && inRect(x, y, copyRect())) {
     doCopy();
+    return;
+  }
+  if (shareUrl && inRect(x, y, hideBtn)) {
+    dismissShare();
     return;
   }
   if (inRect(x, y, shareBtn)) {
@@ -2047,11 +2060,26 @@ function layoutUtils() {
 
 function copyRect() {
   copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : nextBtn.y + nextBtn.h + 22;
+  // Narrower than before to make room for a dismiss: after STOP in jam the panel had
+  // no way out at all, and it sat over the herd you were trying to play.
+  copyBtn.w = Math.min(238, W - 116);
+  copyBtn.x = (W - copyBtn.w - 52) / 2;
+  hideBtn.w = 44;
+  hideBtn.h = copyBtn.h;
+  hideBtn.x = copyBtn.x + copyBtn.w + 8;
+  hideBtn.y = copyBtn.y;
   return copyBtn;
+}
+
+function dismissShare() {
+  shareUrl = "";
+  copiedAt = -9;
+  showLink(false);
 }
 
 function drawCopy(now: number) {
   copyRect();
+  btn(hideBtn, "✕", undefined, QUIET);
   const fresh = now - copiedAt < 3;
   const sharey = !!(navigator as any).share;
   text(shareWhat, W / 2, copyBtn.y - 14, 14, 0.5);
