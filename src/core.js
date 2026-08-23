@@ -23,7 +23,7 @@ export function nextGap(len, r, hard) {
 }
 
 // A half-beat gap is 375ms, so a flat +/-360ms window would swallow its neighbour.
-// Never let the window exceed 48% of the tightest gap in the phrase.
+// Never let the window exceed 48% of the tightest gap in the pattern.
 export function windowFor(offs) {
   let min = 9;
   for (let i = 1; i < offs.length; i++) min = Math.min(min, offs[i] - offs[i - 1]);
@@ -34,7 +34,7 @@ export function windowFor(offs) {
 // Named tiers rather than a sliding number. A continuous ramp gave no vocabulary
 // between PERFECT and a raw millisecond count, so "late 120ms" told you nothing about
 // whether that was decent. Bands are fractions of the window, not fixed times, so a
-// phrase with off-beats (half the window) stays playable.
+// pattern with off-beats (half the window) stays playable.
 export const TIERS = [
   { at: 0.17, name: "PERFECT", credit: 1 },
   { at: 0.36, name: "GREAT", credit: 0.85 },
@@ -53,7 +53,7 @@ export function timingScore(off, win) {
   return t ? t.credit : 0;
 }
 
-// Weighted by depth into the phrase as well as accuracy: accuracy alone maxes out
+// Weighted by depth into the pattern as well as accuracy: accuracy alone maxes out
 // on the first correct note and leaves the spectacle nowhere to build.
 export function heat(judged, len) {
   let sum = 0;
@@ -64,7 +64,7 @@ export function heat(judged, len) {
 }
 
 // The opening note is free of TIMING judgement (it sets the beat), so counting it as
-// a whole note let a two-note phrase pass on the gimme alone -- tap once, advance.
+// a whole note let a two-note pattern pass on the gimme alone -- tap once, advance.
 // It still counts, at half weight, so playing the wrong first note is not free either.
 export const ANCHOR_W = 0.5;
 

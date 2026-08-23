@@ -1,6 +1,6 @@
 // UNICORN STORM -- a call-and-response rhythm game.
 //
-// The herd plays a phrase on the beat; you play it back. Getting it right makes
+// The herd plays a pattern on the beat; you play it back. Getting it right makes
 // everything bigger: taller arcs, fatter ribbons, louder fireworks.
 //
 // Pitch belongs to the unicorn (one note each), so recall is one axis: WHICH, and WHEN.
@@ -48,11 +48,11 @@ let SIZE = 1.55;
 let HIT = 59;
 const BOUNCE = 0.96;
 
-// Ceremony is expensive. A 2-note phrase takes ~1.5s to play, so multi-bar
+// Ceremony is expensive. A 2-note pattern takes ~1.5s to play, so multi-bar
 // countdowns around it meant waiting far longer than playing.
 // Every countdown reads 3, 2, 1 -- the same shape before the herd plays and before
 // your turn, so there's one rhythm to learn rather than three.
-// One beat between the phrase ending and your turn -- just enough that the herd's
+// One beat between the pattern ending and your turn -- just enough that the herd's
 // last note doesn't blur into your first. A longer gap was dead air: the response
 // clock starts on your tap anyway, so there is nothing to count you in to.
 const REST = 1;
@@ -523,10 +523,10 @@ const PICK = 8;
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
 let seq: number[] = [];
-// Beat offset of each note from the phrase start. Uniform 1-beat spacing to begin
-// with; longer phrases earn held notes and then off-beat pairs.
+// Beat offset of each note from the pattern start. Uniform 1-beat spacing to begin
+// with; longer patterns earn held notes and then off-beat pairs.
 let offs: number[] = [];
-// Hardcore only: 0 = a low hop, 1 = a high leap. Normal phrases are all low, so the
+// Hardcore only: 0 = a low hop, 1 = a high leap. Normal patterns are all low, so the
 // height channel simply isn't in play there.
 let hgt: number[] = [];
 let hardcore = false;
@@ -554,13 +554,13 @@ function heightsLive() {
 // and no hold reproduced its high one. Both sides now fly the identical path: launch
 // low, and if still held at HOLD_HIGH, convert to the one canonical high apex.
 
-function phraseBeats() {
+function patternBeats() {
   return offs[offs.length - 1];
 }
 let round = 0;
-let best = 0; // longest phrase reached
+let best = 0; // longest pattern reached
 let bestScore = 0;
-let bestClean = 0; // longest phrase reached without a single retry
+let bestClean = 0; // longest pattern reached without a single retry
 // The metronome click and the ground flash are the same idea in two senses, so they
 // are one switch rather than two.
 let beatOn = true;
@@ -614,8 +614,13 @@ let sharedIn = false; // arrived via a shared replay link
 
 let sharedJam = false;
 let sharedName = ""; // the name the sender gave it, if any
+// How long their pattern was. Once the round grows past it, the notes on screen are
+// no longer the thing they sent, so the name has to stop claiming they are. Length
+// rather than round number: a retry is still their pattern, and round has already
+// been incremented by the time the first CALL draws.
+let sharedLen = 0;
 
-// Plays the round back exactly as it happened: the herd's phrase, then the attempt,
+// Plays the round back exactly as it happened: the herd's pattern, then the attempt,
 // with its real timing errors intact. Hearing your own rushing is worth more than
 // being told about it.
 function startReplay(now: number) {
@@ -639,12 +644,12 @@ function startReplay(now: number) {
 // The response clock starts on the player's FIRST tap, not on a countdown. The
 // opening note is therefore a gimme: it can't be early or late, it just sets the
 // beat everything after it is measured against.
-let turnAt = -1; // -1 until they commit; then the origin of their phrase
+let turnAt = -1; // -1 until they commit; then the origin of their pattern
 let pulseAt = 0; // what the metronome and ground flash are anchored to
 
-// Grow by APPENDING one note, never by regenerating. A fresh random phrase every
+// Grow by APPENDING one note, never by regenerating. A fresh random pattern every
 // round is a memory test with no memory in it -- the whole gentleness of Simon comes
-// from the phrase you already know staying put, with one new note on the end.
+// from the pattern you already know staying put, with one new note on the end.
 function newRound(now: number, grow: boolean, keep?: boolean) {
   // Retrying is always allowed, but it costs the streak. That's the whole answer to
   // "how do we tell a clean run from a farmed one" -- no bans, just a price.
@@ -672,7 +677,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
     hgt = hardcore ? [(Math.random() * 2) | 0, (Math.random() * 2) | 0] : [0, 0];
   } else if (grow) {
     seq.push((Math.random() * COUNT) | 0);
-    offs.push(phraseBeats() + coreGap(seq.length, Math.random(), hardcore));
+    offs.push(patternBeats() + coreGap(seq.length, Math.random(), hardcore));
     hgt.push(hardcore && Math.random() < 0.45 ? 1 : 0);
   }
 
@@ -695,7 +700,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
   round++;
 }
 
-// Leaps queued for the future -- lets a celebration play out as a phrase rather
+// Leaps queued for the future -- lets a celebration play out as a pattern rather
 // than everything firing on one frame.
 const pending: { at: number; i: number; power: number; x?: number; hue?: number }[] = [];
 
@@ -786,12 +791,13 @@ function decodeRun(code: string) {
   taps = r.taps;
   sharedJam = !!r.jam;
   sharedName = r.name || "";
+  sharedLen = r.seq.length;
   hardcore = !!r.hardcore;
   return true;
 }
 
 function respondStart() {
-  return phaseAt + (phraseBeats() + REST) * BEAT;
+  return phaseAt + (patternBeats() + REST) * BEAT;
 }
 
 // --- leaping -------------------------------------------------------------
@@ -907,7 +913,7 @@ let jamRec = false;
 let jamRecAt = 0;
 let jamTaps: { i: number; dt: number }[] = [];
 
-// A jam is a performance, not a challenge -- there's no phrase to match, so it gets
+// A jam is a performance, not a challenge -- there's no pattern to match, so it gets
 // its own "j." link that simply plays back what was played.
 function playJam(now: number) {
   if (!taps.length) return;
@@ -1067,8 +1073,8 @@ function finishPattern() {
   shareWhat = `${seq.length} notes${compHard ? ", hardcore" : ""} — for someone to play back`;
 }
 
-// Retry the same phrase without sitting through the herd playing it again. Once you
-// know the phrase, the preview is just a wait.
+// Retry the same pattern without sitting through the herd playing it again. Once you
+// know the pattern, the preview is just a wait.
 function retryBlind(now: number) {
   streak = 0;
   retries++;
@@ -1154,7 +1160,7 @@ function tap(i: number) {
   ensureAudio();
   const now = ac.currentTime;
 
-  // Hands off while the herd counts in and plays: a stray note muddles the phrase
+  // Hands off while the herd counts in and plays: a stray note muddles the pattern
   // you're trying to memorise, and nothing tapped here could count anyway.
   if (phase === CALL) return;
 
@@ -1335,7 +1341,7 @@ function column(x: number) {
 // this is the way back to the top of the level. Nothing is destroyed, so no
 // confirmation step either.
 // Doesn't restart on the spot -- offers the same two ways back in that the round-end
-// screen does, because "start this phrase over" and "let me hear it first" are
+// screen does, because "start this pattern over" and "let me hear it first" are
 // different needs and only you know which one you're in.
 let midRestart = false;
 
@@ -1536,7 +1542,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
 
 
   if (phase === GRADE) {
-    // Guard against the last note of a phrase bleeding into the choice screen.
+    // Guard against the last note of a pattern bleeding into the choice screen.
     const now = ac.currentTime;
     if (now < phaseAt + 0.4) return;
     if (inRect(x, y, againBtn)) newRound(now, false);
@@ -1658,7 +1664,7 @@ function update(now: number) {
     // started yet grades a round they never attempted, and there's nothing to gain
     // by cutting them off -- the clock doesn't begin until they tap anyway. The
     // metronome keeps running so the tempo is alive whenever they do start.
-    const endAt = turnAt < 0 ? Infinity : turnAt + phraseBeats() * BEAT + windowFor();
+    const endAt = turnAt < 0 ? Infinity : turnAt + patternBeats() * BEAT + windowFor();
     if (now > endAt) {
       for (let i = 0; i < seq.length; i++) {
         // Name the notes that never got played -- silence is the least readable failure.
@@ -1678,7 +1684,7 @@ function update(now: number) {
       } else {
         message = FAIL[round % FAIL.length];
       }
-      grew = accuracy >= 0.5; // below half, the phrase must be repeated
+      grew = accuracy >= 0.5; // below half, the pattern must be repeated
       if (grew) {
         if (seq.length > best) best = seq.length;
         if (!retries && seq.length > bestClean) bestClean = seq.length;
@@ -1996,7 +2002,7 @@ function slotColor(i: number, cursor: number) {
 // The panel sits in different places per screen, so one function owns the position
 // and both drawing and hit-testing read it. Behaviour is identical everywhere.
 // Utility controls live in a row along the bottom, where there is dead space on every
-// screen. Stacked in the top-left they crowded the phrase dots and the score, and on a
+// screen. Stacked in the top-left they crowded the pattern dots and the score, and on a
 // tall phone HOME landed on top of the round-end panel. Laid out per phase, and called
 // from both drawing and hit-testing so the two can never disagree.
 function layoutUtils() {
@@ -2531,7 +2537,7 @@ function frame(nowMs: number) {
     return;
   }
 
-  // Sequence dots: one per note, so you can see how long the phrase is and,
+  // Sequence dots: one per note, so you can see how long the pattern is and,
   // during your turn, which beat you're on.
   const n = seq.length;
   const dotY = 42 + topPad;
@@ -2552,7 +2558,7 @@ function frame(nowMs: number) {
 
   // Dots are laid out by TIME, not by index: a half-beat pair sits tight together
   // and a two-beat gap opens up. The row becomes readable notation of the rhythm.
-  const beats = Math.max(1, phraseBeats());
+  const beats = Math.max(1, patternBeats());
   if (n <= 16) {
     const span = Math.min(W - 96, 30 * beats);
     const r = Math.min(5.5, Math.max(2.6, (span / beats) * 0.16));
@@ -2607,11 +2613,13 @@ function frame(nowMs: number) {
       countdown("the herd plays in", toCall);
     } else if (REST > 1 && visIdx >= seq.length && toTurn <= REST) {
       countdown("your turn in", toTurn);
+    } else if (sharedIn && sharedName && seq.length === sharedLen) {
+      text(sharedName, W / 2, H * 0.2, 22, 0.7);
     } else {
       text("listen", W / 2, H * 0.2, 22, 0.5);
     }
   } else if (phase === REPLAY) {
-    // A shared jam is a performance, not a replay of a round -- it has no phrase and
+    // A shared jam is a performance, not a replay of a round -- it has no pattern and
     // no "your take" half to label.
     if (sharedJam) {
       // Just the name they gave it. A jam titled "Pizza" playing on screen doesn't need
@@ -2620,7 +2628,7 @@ function frame(nowMs: number) {
     } else {
       const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
       text("instant replay", W / 2, H * 0.2, 22, 0.6);
-      text(now < turnStarts ? "the phrase" : "your take", W / 2, H * 0.2 + 26, 15, 0.42);
+      text(now < turnStarts ? "the pattern" : "your take", W / 2, H * 0.2 + 26, 15, 0.42);
     }
   } else if (phase === RESPOND) {
     // "GO" punches in and fades, so the switch reads instantly.
@@ -2645,7 +2653,7 @@ function frame(nowMs: number) {
     ctx.fill();
 
     if (midRestart) {
-      text("start this phrase over", W / 2, H * 0.2, 26, 0.85);
+      text("start this pattern over", W / 2, H * 0.2, 26, 0.85);
       text("your score and streak carry on", W / 2, H * 0.2 + 30, 14, 0.45);
     } else {
       text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
@@ -2653,10 +2661,10 @@ function frame(nowMs: number) {
       if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
     }
 
-    choice(blindBtn, "TRY AGAIN", "same phrase, play now", midRestart || !grew);
+    choice(blindBtn, "TRY AGAIN", "same pattern, play now", midRestart || !grew);
     choice(againBtn, "HEAR IT AGAIN", "the herd plays it first", false);
-    // No NEXT from a mid-round restart -- you haven't finished the phrase.
-    if (midRestart) choice(nextBtn, "NEXT!", "finish the phrase first", false, true);
+    // No NEXT from a mid-round restart -- you haven't finished the pattern.
+    if (midRestart) choice(nextBtn, "NEXT!", "finish the pattern first", false, true);
     else if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
     else choice(nextBtn, "NEXT!", "needs 50%", false, true);
 
@@ -2682,6 +2690,10 @@ function frame(nowMs: number) {
     // Surfaced deliberately: if a tap still won't clear this, the state name says why.
     text(`audio: ${ac.state}`, W / 2, H * 0.46 + 56, 13, 0.35);
   }
+
+  // A shared jam is a performance -- there is no run behind it, so the score line is
+  // two numbers that can only ever read zero.
+  if (sharedJam) return;
 
   text(
     // Everything about the run on one line, each part labelled. An unlabelled number

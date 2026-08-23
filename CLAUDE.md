@@ -5,7 +5,7 @@ Game jam entry. Hard constraint: **the zipped build must be ≤ 13312 bytes.** C
 
 ## The game: UNICORN STORM
 
-Call-and-response rhythm game. The herd plays a phrase on the beat; the player plays it
+Call-and-response rhythm game. The herd plays a pattern on the beat; the player plays it
 back. Five unicorns, one pentatonic note each (C D E G A) — so any tap order sounds
 musical, which matters because players fail constantly in a memory game.
 
