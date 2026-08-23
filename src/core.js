@@ -26,8 +26,26 @@ export function windowFor(offs) {
 }
 
 // --- scoring -----------------------------------------------------------------
+// Named tiers rather than a sliding number. A continuous ramp gave no vocabulary
+// between PERFECT and a raw millisecond count, so "late 120ms" told you nothing about
+// whether that was decent. Bands are fractions of the window, not fixed times, so a
+// phrase with off-beats (half the window) stays playable.
+export const TIERS = [
+  { at: 0.17, name: "PERFECT", credit: 1 },
+  { at: 0.36, name: "GREAT", credit: 0.85 },
+  { at: 0.67, name: "GOOD", credit: 0.6 },
+  { at: 1, name: "", credit: 0.3 }, // named by direction instead: "early"/"late"
+];
+
+export function tierFor(off, win) {
+  const f = off / win;
+  for (const t of TIERS) if (f <= t.at) return t;
+  return null; // outside the window entirely -- not this note's tap
+}
+
 export function timingScore(off, win) {
-  return Math.max(0, 1 - off / win);
+  const t = tierFor(off, win);
+  return t ? t.credit : 0;
 }
 
 // Weighted by depth into the phrase as well as accuracy: accuracy alone maxes out
@@ -40,10 +58,20 @@ export function heat(judged, len) {
   return (sum / n) * (0.3 + 0.7 * (n / len));
 }
 
+// The opening note is free of TIMING judgement (it sets the beat), so counting it as
+// a whole note let a two-note phrase pass on the gimme alone -- tap once, advance.
+// It still counts, at half weight, so playing the wrong first note is not free either.
+export const ANCHOR_W = 0.5;
+
 export function accuracyOf(judged, len) {
   let sum = 0;
-  for (let i = 0; i < len; i++) sum += Math.max(0, judged[i]);
-  return sum / len;
+  let w = 0;
+  for (let i = 0; i < len; i++) {
+    const wi = i === 0 ? ANCHOR_W : 1;
+    sum += Math.max(0, judged[i]) * wi;
+    w += wi;
+  }
+  return w ? sum / w : 0;
 }
 
 export function multFor(streak) {

@@ -104,10 +104,10 @@ test("a tap outside the window is a stray, not a hijack of the next note", () =>
   assert.equal(C.judgeSlot(offs, [-1, -1, -1], 0, 0.5 * C.BEAT, w).k, -1);
 });
 
-test("timing score falls off linearly and floors at zero", () => {
+test("timing score steps down by tier and floors at zero", () => {
   const w = C.WINDOW;
   assert.equal(C.timingScore(0, w), 1);
-  assert.ok(Math.abs(C.timingScore(w / 2, w) - 0.5) < 1e-9);
+  assert.equal(C.timingScore(w * 0.5, w), 0.6, "mid-window is GOOD, a named band");
   assert.equal(C.timingScore(w * 2, w), 0, "never negative");
 });
 
@@ -120,7 +120,9 @@ test("heat builds through the phrase instead of maxing on note one", () => {
 });
 
 test("accuracy counts unplayed notes as missed", () => {
-  assert.equal(C.accuracyOf([1, -1], 2), 0.5);
+  // The opener carries half weight, so one note out of two is a third, not a half.
+  assert.ok(Math.abs(C.accuracyOf([1, -1], 2) - 1 / 3) < 1e-9);
+  assert.equal(C.accuracyOf([-1, -1], 2), 0);
 });
 
 test("the multiplier grows with the streak and is capped", () => {
@@ -201,4 +203,39 @@ test("note height never depends on how the run is going", () => {
   const playerHigh = C.apex(H, 150, C.NOTE_POWER, 0.4);
   assert.ok(Math.abs(herdLow - playerLow) < 1, "low notes must match");
   assert.ok(Math.abs(herdHigh - playerHigh) < 1, "high notes must match");
+});
+
+// --------------------------------------------------------------- timing tiers
+test("tiers are named bands, not a sliding number", () => {
+  const w = C.WINDOW;
+  assert.equal(C.tierFor(0, w).name, "PERFECT");
+  assert.equal(C.tierFor(w * 0.3, w).name, "GREAT");
+  assert.equal(C.tierFor(w * 0.5, w).name, "GOOD");
+  assert.equal(C.tierFor(w * 0.9, w).name, "", "the last band is named by direction");
+  assert.equal(C.tierFor(w * 1.2, w), null, "outside the window is not this note's tap");
+});
+
+test("tiers scale with the window so off-beat phrases stay playable", () => {
+  const tight = C.windowFor([0, 1, 1.5]); // contains a half beat
+  // The same fraction of a tighter window is still PERFECT, just in less time.
+  assert.equal(C.tierFor(tight * 0.1, tight).name, "PERFECT");
+  assert.ok(tight * 0.17 < C.WINDOW * 0.17, "and PERFECT is genuinely harder to hit");
+});
+
+test("credit falls with the tier and never goes negative", () => {
+  const w = C.WINDOW;
+  const c = (f) => C.timingScore(w * f, w);
+  assert.ok(c(0) > c(0.3) && c(0.3) > c(0.5) && c(0.5) > c(0.9));
+  assert.equal(c(2), 0);
+});
+
+test("a two-note phrase can't pass on the free first note alone", () => {
+  // The opener is free of timing judgement; it must not also be free of consequence.
+  const anchorOnly = C.accuracyOf([1, -1], 2);
+  assert.ok(anchorOnly < 0.5, `tap-once-and-advance must fail (got ${anchorOnly.toFixed(2)})`);
+  assert.ok(C.accuracyOf([1, 1], 2) > 0.99, "playing both still scores full marks");
+});
+
+test("the wrong opening note still costs you", () => {
+  assert.ok(C.accuracyOf([0, 1], 2) < C.accuracyOf([1, 1], 2));
 });
