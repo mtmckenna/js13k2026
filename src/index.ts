@@ -1555,6 +1555,11 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
 
 // Drag across the herd to run notes off like a glissando. Each unicorn fires once as
 // the finger crosses into its column, and again only if you leave and come back.
+// Both, because iOS fires touchend first and click may be suppressed; whichever
+// arrives first wins and the other finds nothing pending.
+canvas.addEventListener("click", () => runPendingCopy("click"));
+canvas.addEventListener("touchend", () => runPendingCopy("touchend"));
+
 canvas.addEventListener("pointermove", (e: PointerEvent) => {
   if (!slideCol.has(e.pointerId)) return;
   if (!overHerd(e.clientY)) return;
@@ -2030,28 +2035,40 @@ function copyRect() {
 // Diagnostic for the iOS clipboard question. Reports what the browser actually
 // offers and what the last attempt did, rather than guessing.
 let copyDiag = "";
+// Safari only honours a clipboard write from a click. We act on pointerdown, which
+// it treats as un-activated -- hence NotAllowedError on https where the API exists.
+// So OK just arms the copy, and the click that follows performs it.
+let pendingCopy = "";
+
+function runPendingCopy(via: string) {
+  if (!pendingCopy) return;
+  const url = pendingCopy;
+  pendingCopy = "";
+  const nav = navigator as any;
+  copyDiag = `${location.protocol} ${via}`;
+  try {
+    if (!(nav.clipboard && nav.clipboard.writeText)) {
+      copyDiag += " no-api";
+      return;
+    }
+    nav.clipboard.writeText(url).then(
+      () => {
+        copyDiag += " ok";
+        say(W / 2, H * 0.42, "link copied", "rgba(180,255,210,1)", 20);
+      },
+      (e: any) => (copyDiag += " " + (e && e.name ? e.name : "rejected"))
+    );
+  } catch (e: any) {
+    copyDiag += " threw:" + (e && e.name);
+  }
+}
 
 function dismissShare() {
   // Try the clipboard on the way out, but never claim it worked. The API can no-op
   // silently on iOS, which is what made the old COPIED button a liar -- so success
   // speaks and failure stays quiet, and the link was on screen either way.
-  const nav = navigator as any;
-  const secure = (window as any).isSecureContext;
-  const hasApi = !!(nav.clipboard && nav.clipboard.writeText);
-  copyDiag = `${location.protocol} secure:${secure ? "y" : "n"} api:${hasApi ? "y" : "n"}`;
-  try {
-    if (hasApi)
-      nav.clipboard.writeText(shareUrl).then(
-        () => {
-          copyDiag += " write:ok";
-          say(W / 2, H * 0.42, "link copied", "rgba(180,255,210,1)", 20);
-        },
-        (e: any) => (copyDiag += " write:" + (e && e.name ? e.name : "rejected"))
-      );
-    else copyDiag += " (no api -- needs https)";
-  } catch (e: any) {
-    copyDiag += " threw:" + (e && e.name);
-  }
+  pendingCopy = shareUrl;
+  copyDiag = "armed…";
   shareUrl = "";
   showLink(false);
 }
