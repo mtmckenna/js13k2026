@@ -613,6 +613,7 @@ let replayEnd = 0;
 let sharedIn = false; // arrived via a shared replay link
 
 let sharedJam = false;
+let sharedName = ""; // the name the sender gave it, if any
 
 // Plays the round back exactly as it happened: the herd's phrase, then the attempt,
 // with its real timing errors intact. Hearing your own rushing is worth more than
@@ -784,6 +785,7 @@ function decodeRun(code: string) {
   hgt = r.hgt;
   taps = r.taps;
   sharedJam = !!r.jam;
+  sharedName = r.name || "";
   hardcore = !!r.hardcore;
   return true;
 }
@@ -2356,7 +2358,13 @@ function frame(nowMs: number) {
       GOLD
     );
     if (sharedIn)
-      text("someone sent you this", W / 2, playBtn.y - 16, Math.min(15, W / 34), 0.45);
+      text(
+        sharedName ? `someone sent you “${sharedName}”` : "someone sent you this",
+        W / 2,
+        playBtn.y - 16,
+        Math.min(15, W / 30),
+        sharedName ? 0.7 : 0.45
+      );
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
@@ -2570,7 +2578,8 @@ function frame(nowMs: number) {
     // A shared jam is a performance, not a replay of a round -- it has no phrase and
     // no "your take" half to label.
     if (sharedJam) {
-      text("someone's jam", W / 2, H * 0.2, 22, 0.7);
+      // Use the name they gave it. It was travelling in the link and being ignored.
+      text(sharedName || "someone's jam", W / 2, H * 0.2, 22, 0.8);
       text("listen", W / 2, H * 0.2 + 26, 15, 0.42);
     } else {
       const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
