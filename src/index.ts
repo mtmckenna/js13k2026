@@ -645,7 +645,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
     hgt = hardcore ? [(Math.random() * 2) | 0, (Math.random() * 2) | 0] : [0, 0];
   } else if (grow) {
     seq.push((Math.random() * COUNT) | 0);
-    offs.push(phraseBeats() + coreGap(seq.length, Math.random()));
+    offs.push(phraseBeats() + coreGap(seq.length, Math.random(), hardcore));
     hgt.push(hardcore && Math.random() < 0.45 ? 1 : 0);
   }
 
@@ -2341,15 +2341,16 @@ function frame(nowMs: number) {
 
   if (phase === BRIEF) {
     wonky("HARDCORE", W / 2, H * 0.2, Math.min(52, W / 9), "", true);
-    const lines = [
-      "notes now come at two heights",
-      "TAP for a low hop  ·  HOLD for a high leap",
-      "the herd shows you which one it wants",
-      "wrong height still counts, but only 45%",
-      "timing works exactly as before",
-    ];
-    for (let i = 0; i < lines.length; i++)
-      text(lines[i], W / 2, H * 0.2 + 46 + i * 26, Math.min(16, W / 30), i === 1 ? 0.85 : 0.55);
+    // Leads with the verb, because the hold is the only genuinely new skill. The
+    // consequence and the reassurance are small print -- true, but not what you need
+    // in the first two seconds.
+    const big = Math.min(21, W / 22);
+    const small = Math.min(14, W / 32);
+    text("TAP for a low hop", W / 2, H * 0.2 + 48, big, 0.92);
+    text("HOLD for a high leap", W / 2, H * 0.2 + 76, big, 0.92);
+    text("the herd shows you which it wants — match it", W / 2, H * 0.2 + 112, small, 0.6);
+    text("wrong height still scores, but only 45%", W / 2, H * 0.2 + 140, small, 0.4);
+    text("rhythm arrives sooner. timing is unchanged.", W / 2, H * 0.2 + 162, small, 0.4);
     btn(goBtn, "BRING IT ON", undefined, GOLD);
     btn(restartBtn, "BACK", undefined, QUIET);
     return;

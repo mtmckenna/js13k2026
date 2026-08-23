@@ -59,6 +59,16 @@ test("the first six notes are straight quarter notes", () => {
       assert.equal(C.nextGap(len, r), 1, `len ${len} must stay on the beat`);
 });
 
+test("hardcore pulls the rhythm schedule forward", () => {
+  const draws = Array.from({ length: 40 }, (_, i) => i / 40);
+  const seen = (len, hard) => new Set(draws.map((r) => C.nextGap(len, r, hard)));
+  assert.deepEqual([...seen(5, false)], [1], "normal is still straight at 5 notes");
+  assert.ok(seen(5, true).has(2), "hardcore has holds by 5");
+  assert.ok(!seen(5, true).has(0.5), "but not off-beats yet");
+  assert.ok(seen(7, true).has(0.5), "hardcore has off-beats by 7");
+  assert.ok(!seen(7, false).has(0.5), "normal does not until 10");
+});
+
 test("held notes arrive before off-beats, never the other way round", () => {
   const mid = new Set();
   const late = new Set();

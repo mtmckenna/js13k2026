@@ -11,9 +11,14 @@ export const HIGH_F = 0.667; // canonical high apex, as a fraction of screen hei
 // --- difficulty ramp ---------------------------------------------------------
 // Straight quarter notes for a long time; held notes (easier, more room) before
 // off-beats. `r` is the random draw, passed in so this is testable.
-export function nextGap(len, r) {
-  if (len < 7) return 1;
-  const pool = len < 10 ? [1, 1, 1, 1, 2] : [1, 1, 1, 1, 2, 2, 0.5];
+// `hard` pulls the whole schedule forward. Hardcore was only ever one axis harder --
+// heights -- while its rhythm ramp was identical to normal, so a fresh hardcore run
+// opened on straight quarter notes exactly like an easy one.
+export function nextGap(len, r, hard) {
+  const holds = hard ? 4 : 7;
+  const offs = hard ? 6 : 10;
+  if (len < holds) return 1;
+  const pool = len < offs ? [1, 1, 1, 1, 2] : [1, 1, 1, 1, 2, 2, 0.5];
   return pool[Math.min(pool.length - 1, Math.floor(r * pool.length))];
 }
 
