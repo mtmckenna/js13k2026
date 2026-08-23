@@ -328,35 +328,16 @@ function resize() {
   playBtn.y = H * 0.4;
 
   // Top-left, well clear of the herd: a stray gameplay tap must never restart a run.
-  restartBtn.w = 92;
-  restartBtn.h = 34;
-  restartBtn.x = 12;
-  restartBtn.y = 12 + topPad;
 
   copyBtn.w = Math.min(238, W - 80);
   copyBtn.h = 48;
   copyBtn.x = (W - copyBtn.w) / 2;
   copyBtn.y = H * 0.16 + 96;
 
-  beatBtn.w = 92;
-  beatBtn.h = 30;
-  beatBtn.x = 12;
-  beatBtn.y = restartBtn.y + restartBtn.h + 8;
-
   goBtn.w = Math.min(260, W * 0.62);
   goBtn.h = 62;
   goBtn.x = (W - goBtn.w) / 2;
   goBtn.y = H * 0.2 + 196;
-
-  homeBtn.w = 92;
-  homeBtn.h = 30;
-  homeBtn.x = 12;
-  homeBtn.y = beatBtn.y + beatBtn.h + 8;
-
-  shareBtn.w = 82;
-  shareBtn.h = 34;
-  shareBtn.x = W - 94;
-  shareBtn.y = 12 + topPad;
 
   // End-of-round choice, side by side and equally reachable.
   const gw = Math.min(168, (W - 56) / 2);
@@ -1378,6 +1359,7 @@ function pokeRestart() {
 
 canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   e.preventDefault();
+  layoutUtils();
   const x = e.clientX;
   const y = e.clientY;
 
@@ -1935,7 +1917,9 @@ function btn(
 
   const fg =
     tone === GOLD ? "#33254a" : tone === LOCKED ? "rgba(255,255,255,.3)" : "rgba(255,255,255,.95)";
-  const size = Math.min(sub ? 16 : 18, r.w / (label.length * 0.72 + 2));
+  // QUIET buttons share one size regardless of label length, so the utility row reads
+  // as a single unit rather than four differently-shouting words.
+  const size = tone === QUIET ? 12.5 : Math.min(sub ? 16 : 18, r.w / (label.length * 0.72 + 2));
   spaced(label, r.x + r.w / 2, r.y + (sub ? r.h * 0.46 : r.h * 0.63), size, fg, 800);
   if (sub)
     spaced(
@@ -1974,6 +1958,30 @@ function slotColor(i: number, cursor: number) {
 // itself rather than in a toast that's gone before you look up.
 // The panel sits in different places per screen, so one function owns the position
 // and both drawing and hit-testing read it. Behaviour is identical everywhere.
+// Utility controls live in a row along the bottom, where there is dead space on every
+// screen. Stacked in the top-left they crowded the phrase dots and the score, and on a
+// tall phone HOME landed on top of the round-end panel. Laid out per phase, and called
+// from both drawing and hit-testing so the two can never disagree.
+function layoutUtils() {
+  const n = phase === JAM ? 3 : phase === COMPOSE ? 1 : 4;
+  const uw = Math.min(96, (W - 40) / n - 8);
+  const y = H - 66;
+  const x0 = (W - (n * uw + (n - 1) * 8)) / 2;
+  const at = (i: number) => ({ x: x0 + i * (uw + 8), y, w: uw, h: 32 });
+  if (phase === JAM) {
+    Object.assign(restartBtn, at(0));
+    Object.assign(beatBtn, at(1));
+    Object.assign(shareBtn, at(2));
+  } else if (phase === COMPOSE) {
+    Object.assign(beatBtn, at(0));
+  } else {
+    Object.assign(restartBtn, at(0));
+    Object.assign(beatBtn, at(1));
+    Object.assign(homeBtn, at(2));
+    Object.assign(shareBtn, at(3));
+  }
+}
+
 function copyRect() {
   copyBtn.y = phase === JAM ? H * 0.14 + 96 : phase === COMPOSE ? H * 0.16 + 96 : replayBtn.y + 62;
   return copyBtn;
@@ -2267,6 +2275,7 @@ function frame(nowMs: number) {
   }
 
   // --- hud ---
+  layoutUtils();
   if (phase !== JAM && phase !== COMPOSE && phase !== GRADE) showLink(false);
 
   if (phase === TITLE) {
@@ -2515,7 +2524,7 @@ function frame(nowMs: number) {
     ctx.fill();
 
     text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
-    if (!big) text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
+    text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
     if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
 
     // Two real options. Whichever suits the result is highlighted, but both are
@@ -2555,7 +2564,7 @@ function frame(nowMs: number) {
   text(
     `${hardcore ? "HARDCORE   " : ""}${seq.length} notes   ${mult > 1 ? `x${mult.toFixed(1)}   ` : ""}longest ${best}`,
     W / 2,
-    H - 18,
+    H - 16,
     14,
     0.35
   );
