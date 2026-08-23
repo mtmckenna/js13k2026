@@ -976,9 +976,10 @@ function composeTap(i: number) {
 const linkEl = document.createElement("input");
 linkEl.readOnly = true;
 linkEl.style.cssText =
-  "position:fixed;display:none;box-sizing:border-box;font:600 13px system-ui,-apple-system,sans-serif;" +
-  "padding:9px;border-radius:10px;border:1px solid rgba(255,255,255,.32);background:rgba(10,8,26,.92);" +
-  "color:#fff;text-align:center;-webkit-user-select:text;user-select:text;-webkit-touch-callout:default";
+  // Big enough to long-press without aiming. 16px also stops iOS zooming on focus.
+  "position:fixed;display:none;box-sizing:border-box;font:600 16px system-ui,-apple-system,sans-serif;" +
+  "padding:15px 10px;border-radius:12px;border:2px solid rgba(255,255,255,.4);background:rgba(10,8,26,.95);" +
+  "color:#fff;text-align:center;-webkit-user-select:all;user-select:all;-webkit-touch-callout:default";
 document.body.appendChild(linkEl);
 linkEl.addEventListener("focus", () => linkEl.select());
 linkEl.addEventListener("click", () => linkEl.select());
@@ -986,11 +987,9 @@ linkEl.addEventListener("click", () => linkEl.select());
 let linkShown = false;
 // Where the selectable link sits: under the copy panel in jam and compose, and in
 // the gap between the round-end panel and the herd during play.
+// Only jam and compose share now, so there is only one place this can sit.
 function linkTop() {
-  return phase === JAM || phase === COMPOSE
-    ? copyBtn.y + copyBtn.h + 34
-    // Clear of the panel, which ends at +16 -- the label was landing on its border.
-    : nextBtn.y + nextBtn.h + 56;
+  return copyBtn.y + copyBtn.h + 34;
 }
 
 function showLink(on: boolean) {
@@ -1000,7 +999,7 @@ function showLink(on: boolean) {
     linkEl.style.display = "none";
     return;
   }
-  const lw = Math.min(300, W - 60);
+  const lw = Math.min(330, W - 36);
   linkEl.value = shareUrl;
   linkEl.style.left = W / 2 - lw / 2 + "px";
   linkEl.style.top = linkTop() + "px";
@@ -1494,10 +1493,7 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     restartLevel();
     return;
   }
-  if (shareUrl && inRect(x, y, hideBtn)) {
-    dismissShare();
-    return;
-  }
+
 
   if (phase === GRADE) {
     // Guard against the last note of a phrase bleeding into the choice screen.
@@ -1637,8 +1633,6 @@ function update(now: number) {
       } else {
         message = FAIL[round % FAIL.length];
       }
-      shareUrl = runUrl();
-      shareWhat = `${seq.length} notes, ${score} pts`;
       grew = accuracy >= 0.5; // below half, the phrase must be repeated
       if (grew) {
         if (seq.length > best) best = seq.length;
@@ -1999,7 +1993,7 @@ function drawCopy() {
   btn(hideBtn, "✕", undefined, QUIET);
   text("share your progress!!", W / 2, copyBtn.y + 6, 18, 0.9);
   text(shareWhat, W / 2, copyBtn.y + 28, 13, 0.45);
-  text("long-press the link to copy it", W / 2, copyBtn.y + 48, 12, 0.4);
+    text("tap it, then long-press to copy", W / 2, copyBtn.y + 48, 12, 0.42);
   showLink(true);
 }
 
@@ -2276,7 +2270,7 @@ function frame(nowMs: number) {
 
   // --- hud ---
   layoutUtils();
-  if (phase !== JAM && phase !== COMPOSE && phase !== GRADE) showLink(false);
+  if (phase !== JAM && phase !== COMPOSE) showLink(false);
 
   if (phase === TITLE) {
     if (starting) return; // a run is spinning up; don't flash the menu on the way out
@@ -2368,7 +2362,7 @@ function frame(nowMs: number) {
     } else if (shareUrl) drawCopy();
     else showLink(false);
     text("jam", W / 2, H * 0.14, 26, 0.8);
-    text("no timer, no score — tap for a hop, hold for a leap", W / 2, H * 0.14 + 26, 15, 0.4);
+    text("tap for a hop, hold for a leap", W / 2, H * 0.14 + 26, Math.min(15, W / 25), 0.4);
     // The storm gauge is the only readout: it IS how hard you're playing.
     const gw = Math.min(220, W * 0.5);
     ctx.fillStyle = "rgba(255,255,255,.1)";
@@ -2556,10 +2550,6 @@ function frame(nowMs: number) {
     else if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
     else choice(nextBtn, "NEXT!", "needs 50%", false, true);
 
-    if (shareUrl && !midRestart) {
-      showLink(true);
-      text("share your progress!!", W / 2, linkTop() - 22, 15, 0.75);
-    }
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
