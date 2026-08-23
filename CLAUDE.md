@@ -109,5 +109,15 @@ Baseline starter measures ~1.5kB zipped.
   don't remove them.
 - If port 8081 is refused, something is already holding it. Find it with
   `ss -ltnp | grep 8081` rather than letting webpack drift to another port.
-- This repo has **no git remote**. History was re-initialized so it's detached from the
-  starter. Add your own `origin` when you create the GitHub repo.
+- `origin` is `mtmckenna/js13k2026`. History was re-initialized so it's detached from the
+  starter; pushing to `main` deploys to <https://mtmckenna.com/js13k2026> via Actions.
+- **Clipboard writes need two separate things**, and the first hides the second.
+  `navigator.clipboard` is undefined entirely outside a secure context, so the dev server
+  over plain http has no API at all — testing there tells you nothing about production.
+  And Safari only honours a write from a **click**; calling from `pointerdown` gets you
+  `NotAllowedError` even on https. We write from `click` (plus `touchend`, since iOS fires
+  that first and can suppress the click), and the click still arrives despite the
+  `preventDefault` on pointerdown.
+- **Add `?debug` to see on-screen diagnostics.** There is no console on an iPad, so the
+  only way to find out why something failed on the actual device is to draw it. That line
+  is what turned "copy doesn't work" into the two causes above; leave the hook in.

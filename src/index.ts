@@ -2034,6 +2034,11 @@ function copyRect() {
 
 // Diagnostic for the iOS clipboard question. Reports what the browser actually
 // offers and what the last attempt did, rather than guessing.
+// Add ?debug to the URL to see it. Kept rather than deleted: it is the only way to
+// tell why a clipboard write failed on a device you can't attach a console to, and
+// it already found two separate causes -- no API over http, then NotAllowedError
+// from writing outside a click.
+const DEBUG = location.search.indexOf("debug") >= 0;
 let copyDiag = "";
 // Safari only honours a clipboard write from a click. We act on pointerdown, which
 // it treats as un-activated -- hence NotAllowedError on https where the API exists.
@@ -2373,7 +2378,7 @@ function frame(nowMs: number) {
 
   // --- hud ---
   layoutUtils();
-  if (copyDiag) text(copyDiag, W / 2, H - 96, 12, 0.75);
+  if (DEBUG && copyDiag) text(copyDiag, W / 2, H - 96, 12, 0.75);
   if (phase !== JAM && phase !== COMPOSE) showLink(false);
 
   if (phase === TITLE) {
