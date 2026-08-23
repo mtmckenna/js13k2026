@@ -2614,9 +2614,9 @@ function frame(nowMs: number) {
     // A shared jam is a performance, not a replay of a round -- it has no phrase and
     // no "your take" half to label.
     if (sharedJam) {
-      // Use the name they gave it. It was travelling in the link and being ignored.
-      text(sharedName || "someone's jam", W / 2, H * 0.2, 22, 0.8);
-      text("listen", W / 2, H * 0.2 + 26, 15, 0.42);
+      // Just the name they gave it. A jam titled "Pizza" playing on screen doesn't need
+      // to be captioned "listen" -- the sound says that.
+      text(sharedName || "someone's jam", W / 2, H * 0.2 + 10, 24, 0.85);
     } else {
       const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
       text("instant replay", W / 2, H * 0.2, 22, 0.6);
