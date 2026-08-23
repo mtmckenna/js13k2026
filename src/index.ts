@@ -2428,20 +2428,6 @@ function frame(nowMs: number) {
 
   if (phase === COMPOSE) {
     text("make a pattern", W / 2, H * 0.16, 24, 0.85);
-    text(
-      seq.length ? `${seq.length} note${seq.length > 1 ? "s" : ""} — tap the herd to add` : "tap the herd to lay down notes",
-      W / 2,
-      H * 0.16 + 28,
-      15,
-      0.45
-    );
-    text(
-      compHard ? "hold a unicorn to write a high note" : "notes snap to the nearest half beat",
-      W / 2,
-      H * 0.16 + 50,
-      13,
-      0.3
-    );
     btn(shareBtn, compHard ? "HARDCORE" : "NORMAL", undefined, compHard ? GOLD : QUIET);
 
     // the pattern so far, spaced by time
@@ -2449,9 +2435,21 @@ function frame(nowMs: number) {
       const beats = Math.max(1, offs[offs.length - 1]);
       const span = Math.min(W - 96, Math.max(120, 30 * beats));
       const x0 = W / 2 - span / 2;
+      const y = H * 0.16 + 84;
+
+      // The dots sit at their real times, so the gaps ARE the rhythm -- but floating
+      // in space they just looked scattered. A line and beat ticks make them read as
+      // positions on a timeline.
+      ctx.fillStyle = "rgba(255,255,255,.14)";
+      ctx.fillRect(x0 - 6, y - 1, span + 12, 2);
+      for (let b = 0; b <= beats; b++) {
+        ctx.fillStyle = `rgba(255,255,255,${b % 4 ? 0.14 : 0.3})`;
+        ctx.fillRect(x0 + (b / beats) * span - 1, y - 6, 2, 12);
+      }
+
       for (let i = 0; i < seq.length; i++) {
         ctx.beginPath();
-        ctx.arc(x0 + (offs[i] / beats) * span, H * 0.16 + 84, hgt[i] ? 9 : 6, 0, 6.284);
+        ctx.arc(x0 + (offs[i] / beats) * span, y, hgt[i] ? 9 : 6.5, 0, 6.284);
         ctx.fillStyle = `hsl(${HUES[seq[i]]},80%,66%)`;
         ctx.fill();
       }
@@ -2471,9 +2469,6 @@ function frame(nowMs: number) {
     ] as [typeof clearBtn, string, boolean][]) {
       btn(r, label, undefined, live ? (label === "DONE" ? GOLD : PLAIN) : LOCKED);
     }
-    const hintY = hearBtn.y + 82;
-    if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
-
     if (patternDone && shareUrl) drawCopy();
     else showLink(false);
 
