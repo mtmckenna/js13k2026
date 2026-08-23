@@ -188,3 +188,17 @@ test("heights hold their shape across screens", () => {
     assert.ok(Math.abs(r - 1.807) < 0.02, `${name} height ratio drifted (${r.toFixed(3)})`);
   }
 });
+
+test("note height never depends on how the run is going", () => {
+  // The herd played at last round's accuracy while the player played at this round's
+  // running heat, so the demo was tall and the answer small. Height is information;
+  // it must be one number.
+  assert.equal(C.NOTE_POWER, 0.5);
+  const H = 650;
+  const herdLow = C.apex(H, 150, C.NOTE_POWER, 0);
+  const playerLow = C.apex(H, 150, C.NOTE_POWER, 0.05);
+  const herdHigh = C.apex(H, 150, C.NOTE_POWER, 1);
+  const playerHigh = C.apex(H, 150, C.NOTE_POWER, 0.4);
+  assert.ok(Math.abs(herdLow - playerLow) < 1, "low notes must match");
+  assert.ok(Math.abs(herdHigh - playerHigh) < 1, "high notes must match");
+});

@@ -25,6 +25,7 @@ import {
   heat as coreHeat,
   judgeSlot,
   launchParams,
+  NOTE_POWER,
   multFor,
   nextGap as coreGap,
   windowFor as coreWindow,
@@ -542,7 +543,7 @@ let compHard = false; // does the pattern being written use heights?
 // In hardcore the arc carries information, so it is canonical; elsewhere it may
 // still swell with flourish.
 function notePower() {
-  return hardcore ? 0.5 : 0.45 + flourish * 0.55;
+  return NOTE_POWER;
 }
 
 function heightsLive() {
@@ -796,7 +797,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
   const vy = -vy0;
   if (x + dir * reach < 40 || x + dir * reach > W - 40) dir = -dir;
 
-  const ribbon = { hue, pts: [], age: 0, fat: 0.6 + power };
+  const ribbon = { hue, pts: [], age: 0, fat: 0.6 + Math.max(power - 0.5, flourish) };
   ribbons.push(ribbon);
   const f: Flyer = {
     x,
@@ -810,7 +811,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     // Airborne copies keep a stride too, and a random one for crowd extras.
     gait: idx === undefined ? Math.random() * 6.28 : herd[idx].gait,
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
-    glow: 0.3 + power * 0.7,
+    glow: 0.3 + Math.max(power - 0.5, flourish) * 0.7,
     hot: !!hot,
     ribbon,
   };
@@ -1217,7 +1218,7 @@ function tap(i: number) {
       say(lx, ly, "wrong one", "rgba(255,110,120,.95)", 17);
     }
     flourish = heat();
-    leap(i, ok ? notePower() : 0.2, ok);
+    leap(i, ok ? NOTE_POWER : 0.25, ok);
     return;
   }
 
@@ -1229,7 +1230,7 @@ function tap(i: number) {
   const win = windowFor();
   const { k } = judgeSlot(offs, judged, turnAt, now, win);
   if (k < 0) {
-    leap(i, 0.3);
+    leap(i, 0.25);
     flourish = Math.max(0, flourish - 0.15);
     say(lx, ly, "extra", "rgba(255,255,255,.5)", 15);
     return;
@@ -1259,7 +1260,7 @@ function tap(i: number) {
 
   flourish = heat();
 
-  leap(i, right ? notePower() : 0.2, right && timing > 0.3);
+  leap(i, right ? NOTE_POWER : 0.25, right && timing > 0.3);
 }
 
 // One place that decides what a note in column `col` means, so a slide behaves
@@ -1276,7 +1277,7 @@ function jamNote(i: number) {
   }
   jamHeat = Math.min(1, jamHeat + 0.13);
   note(NOTES[i], herd[i].voice, ac.currentTime, 0.22);
-  leap(i, 0.35 + jamHeat * 0.75);
+  leap(i, NOTE_POWER);
 }
 
 function hitNote(col: number) {
@@ -1607,7 +1608,7 @@ function update(now: number) {
     while (visIdx < seq.length && now >= phaseAt + offs[visIdx] * BEAT) {
       // In hardcore the call shows the height too: a high note visibly soars, which is
       // the only way the player can learn what to give back.
-      const f = leap(seq[visIdx], notePower());
+      const f = leap(seq[visIdx], NOTE_POWER);
       if (hgt[visIdx]) {
         // The herd "holds" its own note, through the very same mechanism.
         f.armAt = now + HOLD_HIGH;

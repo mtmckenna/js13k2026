@@ -66,6 +66,13 @@ export function judgeSlot(offs, judged, turnAt, now, win) {
   return best > win ? { k: -1, off: best } : { k, off: best };
 }
 
+// Height is INFORMATION now (tap vs hold), so it must never depend on how well the
+// run is going. It used to: the herd played at last round's accuracy while the player
+// played at this round's running heat, which starts near zero -- so the herd showed
+// tall arcs and your answers came out small. Spectacle still escalates, through ribbon
+// width, glow, sparks, sky and lightning.
+export const NOTE_POWER = 0.5;
+
 // --- physics -----------------------------------------------------------------
 // Flight time depends on the NOTE, never on the screen: derived from sqrt(peak/G) it
 // ran 18% longer on a tall display, which moved every crossing against a fixed beat.
