@@ -1907,6 +1907,14 @@ function btn(
   ctx.fillStyle = tone === LOCKED ? "rgba(6,4,16,.25)" : "rgba(6,4,16,.6)";
   ctx.fill();
 
+  // Opaque backing first. The tint below is semi-transparent, and the shadow only
+  // covers the button from the offset inward -- so without this the top-left strip
+  // showed sky through the fill while the rest showed shadow, reading as a gap
+  // between the border and the interior.
+  chamfer(r.x, r.y, r.w, r.h, c);
+  ctx.fillStyle = "#131226";
+  ctx.fill();
+
   chamfer(r.x, r.y, r.w, r.h, c);
   ctx.fillStyle =
     tone === GOLD
