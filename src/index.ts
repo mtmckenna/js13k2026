@@ -293,7 +293,6 @@ function songRect(i: number) {
 // STOP or DONE -- invisible, and impossible to repeat if you lost the clipboard.
 let shareUrl = "";
 let shareWhat = "";
-let copiedAt = -9;
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -990,7 +989,8 @@ let linkShown = false;
 function linkTop() {
   return phase === JAM || phase === COMPOSE
     ? copyBtn.y + copyBtn.h + 34
-    : nextBtn.y + nextBtn.h + 30;
+    // Clear of the panel, which ends at +16 -- the label was landing on its border.
+    : nextBtn.y + nextBtn.h + 56;
 }
 
 function showLink(on: boolean) {
@@ -1006,74 +1006,6 @@ function showLink(on: boolean) {
   linkEl.style.top = linkTop() + "px";
   linkEl.style.width = lw + "px";
   linkEl.style.display = "block";
-}
-
-function doCopy() {
-  copiedAt = ac ? ac.currentTime : 0;
-  // The share sheet is the reliable route on iOS -- it's the OS doing the sending,
-  // not a clipboard write we can't verify.
-  const nav = navigator as any;
-  try {
-    if (nav.share) {
-      nav.share({ title: "Unicorn Storm", url: shareUrl }).catch(() => {});
-      return;
-    }
-  } catch (e) {}
-  copyLink(shareUrl, copyBtn.y - 18);
-}
-
-function copyLink(url: string, y: number) {
-  // Only failure needs announcing: on success the button already reads COPIED and the
-  // link is on screen, and the toast was landing behind the round-end panel.
-  const done = (good: boolean) => {
-    if (!good) say(W / 2, y, "couldn't copy — use the link below", "rgba(255,170,170,1)", 17);
-  };
-  // execCommand first, not the async Clipboard API. On iOS the async path needs an
-  // activation Safari accepts and can fail SILENTLY, so its rejection handler never
-  // ran and the fallback never fired. The synchronous path returns a real boolean.
-  if (legacyCopy(url)) {
-    done(true);
-    return;
-  }
-  const nav = navigator as any;
-  try {
-    if (nav.clipboard && nav.clipboard.writeText) {
-      nav.clipboard.writeText(url).then(() => done(true), () => done(false));
-      return;
-    }
-  } catch (e) {}
-  done(false);
-}
-
-// Older Safari refuses the async clipboard outside narrow conditions; a selected
-// off-screen textarea still works there.
-function legacyCopy(url: string) {
-  try {
-    // The iOS recipe specifically: contentEditable, a Range over the contents, THEN
-    // setSelectionRange. A plain .select() on a readonly textarea is ignored there.
-    // 16px font stops Safari zooming, and it must be on-screen (1px, transparent).
-    const ta = document.createElement("textarea");
-    ta.value = url;
-    ta.contentEditable = "true";
-    ta.readOnly = false;
-    ta.style.cssText =
-      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;-webkit-user-select:text";
-    document.body.appendChild(ta);
-
-    const r = document.createRange();
-    r.selectNodeContents(ta);
-    const sel = getSelection();
-    sel.removeAllRanges();
-    sel.addRange(r);
-    ta.setSelectionRange(0, 999999);
-
-    const ok = document.execCommand("copy");
-    sel.removeAllRanges(); // don't leave a selection for iOS to decorate
-    document.body.removeChild(ta);
-    return ok;
-  } catch (e) {
-    return false;
-  }
 }
 
 function runUrl() {
@@ -1106,7 +1038,6 @@ function finishPattern() {
   patternDone = true;
   shareUrl = runUrl();
   shareWhat = `your pattern — ${seq.length} notes`;
-  copiedAt = -9;
 }
 
 // Retry the same phrase without sitting through the herd playing it again. Once you
@@ -1371,12 +1302,6 @@ function column(x: number) {
   return Math.min(COUNT - 1, Math.max(0, Math.round(x / slot) - 1));
 }
 
-// Two taps to restart. Losing a long run to a misplaced thumb would be far worse
-// than the small friction of confirming.
-function shareRun() {
-  copyLink(runUrl(), H * 0.44);
-}
-
 // Restarts the PHRASE, not the run. Fumbling one round should cost the streak, the
 // way TRY AGAIN does -- not the whole run and every point in it. HOME is the way out;
 // this is the way back to the top of the level. Nothing is destroyed, so no
@@ -1424,10 +1349,6 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       phase = TITLE;
       return;
     }
-    if (shareUrl && inRect(x, y, copyRect())) {
-      doCopy();
-      return;
-    }
     if (shareUrl && inRect(x, y, hideBtn)) {
       dismissShare();
       return;
@@ -1439,7 +1360,6 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
           taps = jamTaps;
           shareUrl = location.origin + location.pathname + "#" + encodeJam(jamTaps);
           shareWhat = `your jam — ${jamTaps.length} notes`;
-          copiedAt = -9;
         }
       } else {
         jamRec = true;
@@ -1456,10 +1376,6 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
   }
 
   if (phase === COMPOSE) {
-    if (patternDone && shareUrl && inRect(x, y, copyRect())) {
-      doCopy();
-      return;
-    }
     if (patternDone && shareUrl && inRect(x, y, hideBtn)) {
       dismissShare();
       return;
@@ -1578,18 +1494,8 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     restartLevel();
     return;
   }
-  if (shareUrl && inRect(x, y, copyRect())) {
-    doCopy();
-    return;
-  }
   if (shareUrl && inRect(x, y, hideBtn)) {
     dismissShare();
-    return;
-  }
-  if (inRect(x, y, shareBtn)) {
-    shareUrl = runUrl();
-    shareWhat = `your run — ${seq.length} notes, ${score} pts`;
-    doCopy();
     return;
   }
 
@@ -1731,6 +1637,8 @@ function update(now: number) {
       } else {
         message = FAIL[round % FAIL.length];
       }
+      shareUrl = runUrl();
+      shareWhat = `${seq.length} notes, ${score} pts`;
       grew = accuracy >= 0.5; // below half, the phrase must be repeated
       if (grew) {
         if (seq.length > best) best = seq.length;
@@ -2046,7 +1954,7 @@ function slotColor(i: number, cursor: number) {
 // tall phone HOME landed on top of the round-end panel. Laid out per phase, and called
 // from both drawing and hit-testing so the two can never disagree.
 function layoutUtils() {
-  const n = phase === JAM ? 3 : phase === COMPOSE ? 1 : 4;
+  const n = phase === JAM ? 3 : phase === COMPOSE ? 1 : 3;
   const uw = Math.min(96, (W - 40) / n - 8);
   const y = H - 66;
   const x0 = (W - (n * uw + (n - 1) * 8)) / 2;
@@ -2061,7 +1969,6 @@ function layoutUtils() {
     Object.assign(restartBtn, at(0));
     Object.assign(beatBtn, at(1));
     Object.assign(homeBtn, at(2));
-    Object.assign(shareBtn, at(3));
   }
 }
 
@@ -2080,24 +1987,19 @@ function copyRect() {
 
 function dismissShare() {
   shareUrl = "";
-  copiedAt = -9;
   showLink(false);
 }
 
-function drawCopy(now: number) {
+// No copy button. Neither clipboard path could tell success from silence -- the
+// button read COPIED while the message read "couldn't copy" -- and routing through
+// the share sheet re-encoded the hash, so #22414 arrived as %2322414. The link is
+// the feature: on screen, selectable, and long-press copies it verbatim.
+function drawCopy() {
   copyRect();
   btn(hideBtn, "✕", undefined, QUIET);
-  const fresh = now - copiedAt < 3;
-  const sharey = !!(navigator as any).share;
-  text(shareWhat, W / 2, copyBtn.y - 14, 14, 0.5);
-  btn(copyBtn, sharey ? "SEND IT" : fresh ? "COPIED" : "COPY LINK", undefined, fresh && !sharey ? PLAIN : GOLD);
-  text(
-    sharey ? "or long-press the link below to copy it" : "or select the link below",
-    W / 2,
-    copyBtn.y + copyBtn.h + 22,
-    12,
-    0.42
-  );
+  text("share your progress!!", W / 2, copyBtn.y + 6, 18, 0.9);
+  text(shareWhat, W / 2, copyBtn.y + 28, 13, 0.45);
+  text("long-press the link to copy it", W / 2, copyBtn.y + 48, 12, 0.4);
   showLink(true);
 }
 
@@ -2463,7 +2365,7 @@ function frame(nowMs: number) {
     if (jamRec) {
       text(`recording — ${jamTaps.length} notes`, W / 2, H * 0.14 + 82, 13, 0.6);
       showLink(false);
-    } else if (shareUrl) drawCopy(now);
+    } else if (shareUrl) drawCopy();
     else showLink(false);
     text("jam", W / 2, H * 0.14, 26, 0.8);
     text("no timer, no score — tap for a hop, hold for a leap", W / 2, H * 0.14 + 26, 15, 0.4);
@@ -2526,7 +2428,7 @@ function frame(nowMs: number) {
     const hintY = hearBtn.y + 82;
     if (!on) text("at least two notes to send", W / 2, hintY, 12, 0.3);
     else if (!patternDone) text("DONE finishes it and gives you a link", W / 2, hintY, 12, 0.34);
-    if (patternDone && shareUrl) drawCopy(now);
+    if (patternDone && shareUrl) drawCopy();
     else showLink(false);
 
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
@@ -2654,12 +2556,9 @@ function frame(nowMs: number) {
     else if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
     else choice(nextBtn, "NEXT!", "needs 50%", false, true);
 
-    // The copy panel does NOT belong in here -- stacked under the choices it pushed
-    // its own heading behind NEXT! and buried the link off the bottom. In play,
-    // COPY in the utility row does the copying and the link appears below the panel.
-    if (shareUrl) {
+    if (shareUrl && !midRestart) {
       showLink(true);
-      text("your link is below — long-press to copy", W / 2, linkTop() - 12, 12, 0.4);
+      text("share your progress!!", W / 2, linkTop() - 22, 15, 0.75);
     }
   }
 
@@ -2673,7 +2572,6 @@ function frame(nowMs: number) {
     btn(restartBtn, "RESTART", undefined, QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     btn(homeBtn, "HOME", undefined, QUIET);
-    btn(shareBtn, now - copiedAt < 3 ? "COPIED" : "COPY", undefined, QUIET);
   }
 
   if (ac.state !== "running") {
@@ -2688,11 +2586,9 @@ function frame(nowMs: number) {
   text(
     // Everything about the run on one line, each part labelled. An unlabelled number
     // floating at the top told you nothing and collided with the round-end panel.
-    `${song ? song.name + "   " : hardcore ? "HARDCORE   " : ""}${score} pts   ${seq.length}/${
-      song ? song.seq.length : seq.length
-    } notes${
-      mult > 1 ? `   x${mult.toFixed(1)}` : ""
-    }   best ${best}`,
+    // Just the two numbers that mean anything between rounds. Notes, multiplier and
+    // song progress were four labelled stats competing under the buttons.
+    `${score} pts   ·   best ${bestScore}`,
     W / 2,
     H - 16,
     14,
