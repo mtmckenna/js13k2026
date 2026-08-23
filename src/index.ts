@@ -1113,6 +1113,7 @@ function startRun() {
 // starting on a clock that isn't running.
 function waitForClock(go: () => void, tries = 6) {
   if (ac.state === "running") {
+    starting = false; // cleared here so every caller is covered, not just the rounds
     go();
     return;
   }
@@ -1455,8 +1456,17 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     }
     if (inRect(x, y, playBtn)) {
       hardcore = false;
-      if (sharedJam) playJam((ensureAudio(), ac.currentTime));
-      else if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
+      // Same trap as starting a round: scheduling against a parked clock means the
+      // notes are queued at times that never arrive, and it sits there forever.
+      if (sharedJam) {
+        ensureAudio();
+        starting = true;
+        waitForClock(() => playJam(ac.currentTime));
+      } else if (sharedIn && taps.length) {
+        ensureAudio();
+        starting = true;
+        waitForClock(() => startReplay(ac.currentTime));
+      }
       else if (sharedIn) startChallenge();
       else startRun();
     }
@@ -2001,7 +2011,7 @@ function drawCopy() {
   text(phase === JAM ? "share your jam!!" : "share your pattern!!", W / 2, copyBtn.y + 10, 18, 0.92);
   text(shareWhat, W / 2, copyBtn.y + 32, 13, 0.5);
   text("tap the link, then long-press to copy", W / 2, copyBtn.y + 122, 12, 0.42);
-  choice(hideBtn, "OK", "done sharing", true);
+  choice(hideBtn, "OK", "", true);
   showLink(true);
 }
 
@@ -2517,9 +2527,16 @@ function frame(nowMs: number) {
       text("listen", W / 2, H * 0.2, 22, 0.5);
     }
   } else if (phase === REPLAY) {
-    const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
-    text("instant replay", W / 2, H * 0.2, 22, 0.6);
-    text(now < turnStarts ? "the phrase" : "your take", W / 2, H * 0.2 + 26, 15, 0.42);
+    // A shared jam is a performance, not a replay of a round -- it has no phrase and
+    // no "your take" half to label.
+    if (sharedJam) {
+      text("someone's jam", W / 2, H * 0.2, 22, 0.7);
+      text("listen", W / 2, H * 0.2 + 26, 15, 0.42);
+    } else {
+      const turnStarts = replayEnd - 1.4 - (taps.length ? taps[taps.length - 1].dt : 0);
+      text("instant replay", W / 2, H * 0.2, 22, 0.6);
+      text(now < turnStarts ? "the phrase" : "your take", W / 2, H * 0.2 + 26, 15, 0.42);
+    }
   } else if (phase === RESPOND) {
     // "GO" punches in and fades, so the switch reads instantly.
     const since = now - goAt;
