@@ -214,3 +214,26 @@ export function decodeRun(code) {
     return null;
   }
 }
+
+// --- songs -------------------------------------------------------------------
+// A song is just a pattern with a fixed order, so it reuses the whole challenge
+// path: notes as digits, gaps as one char each. Everything must sit inside the
+// pentatonic C D E G A the herd already sings -- notes outside it simply don't exist.
+export const SONGS = [
+  // E D C D E E E  D D D  E G G  E D C D E E E E D D E D C
+  ["MARY", "2101222111233", "111111211112"],
+  // C C G G A A G  E E D D C C
+  ["TWINKLE", "003344322110", "11111211112"],
+  // C D E C  C D E C  E G  E G   (Frere Jacques, first half)
+  ["ROUND", "012001200323", "11121112111"],
+  // a rolling riff that leans on the off-beats
+  ["STORM", "0243024304230", "010101010101"],
+];
+
+export function songAt(i) {
+  const [name, notes, gaps] = SONGS[i];
+  const seq = notes.split("").map(Number);
+  const offs = [0];
+  for (const g of gaps.split("")) offs.push(offs[offs.length - 1] + (g === "0" ? 0.5 : g === "2" ? 2 : 1));
+  return { name, seq, offs };
+}

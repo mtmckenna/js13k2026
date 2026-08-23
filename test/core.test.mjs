@@ -249,3 +249,25 @@ test("a two-note phrase can't pass on the free first note alone", () => {
 test("the wrong opening note still costs you", () => {
   assert.ok(C.accuracyOf([0, 1], 2) < C.accuracyOf([1, 1], 2));
 });
+
+// ---------------------------------------------------------------------- songs
+test("every song is playable: right length, in scale, sane gaps", () => {
+  assert.ok(C.SONGS.length >= 3, "a menu of one is not a menu");
+  for (let i = 0; i < C.SONGS.length; i++) {
+    const s = C.songAt(i);
+    assert.equal(s.offs.length, s.seq.length, `${s.name}: needs one gap between each pair`);
+    assert.ok(s.seq.length >= 8, `${s.name}: too short to be a tune`);
+    for (const n of s.seq) assert.ok(n >= 0 && n < C.COUNT, `${s.name}: note outside the herd`);
+    for (let k = 1; k < s.offs.length; k++)
+      assert.ok(s.offs[k] > s.offs[k - 1], `${s.name}: notes must move forward in time`);
+  }
+});
+
+test("a song prefix is a valid round, and encodes like any other pattern", () => {
+  const s = C.songAt(0);
+  const n = 5;
+  const run = { seq: s.seq.slice(0, n), offs: s.offs.slice(0, n), hgt: [], taps: [] };
+  const back = C.decodeRun(C.encodeRun(run));
+  assert.deepEqual(back.seq, run.seq, "a partly-revealed song still shares as a link");
+  assert.deepEqual(back.offs, run.offs);
+});

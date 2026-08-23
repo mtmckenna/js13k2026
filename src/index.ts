@@ -28,6 +28,8 @@ import {
   NOTE_POWER,
   tierFor,
   timingScore,
+  SONGS,
+  songAt,
   multFor,
   nextGap as coreGap,
   windowFor as coreWindow,
@@ -274,7 +276,18 @@ const beatBtn = { x: 0, y: 0, w: 0, h: 0 };
 const hardBtn = { x: 0, y: 0, w: 0, h: 0 };
 const copyBtn = { x: 0, y: 0, w: 0, h: 0 };
 const homeBtn = { x: 0, y: 0, w: 0, h: 0 };
-const goBtn = { x: 0, y: 0, w: 0, h: 0 }; // sits below the briefing, clear of the text
+const goBtn = { x: 0, y: 0, w: 0, h: 0 };
+const songBtn = { x: 0, y: 0, w: 0, h: 0 };
+const songSlot = { x: 0, y: 0, w: 0, h: 0 };
+
+// One rect reused per row, so the picker costs no extra state.
+function songRect(i: number) {
+  songSlot.w = Math.min(300, W - 60);
+  songSlot.h = 46;
+  songSlot.x = (W - songSlot.w) / 2;
+  songSlot.y = H * 0.26 + i * 56;
+  return songSlot;
+} // sits below the briefing, clear of the text
 // Set when there is something worth sharing. Copying was a side effect of pressing
 // STOP or DONE -- invisible, and impossible to repeat if you lost the clipboard.
 let shareUrl = "";
@@ -352,13 +365,15 @@ function resize() {
   againBtn.y = gy + gh + 10;
   nextBtn.y = gy + (gh + 10) * 2;
 
-  const bw3 = Math.min(150, (W - 64) / 3);
-  jamBtn.w = makeBtn.w = hardBtn.w = bw3;
-  jamBtn.h = makeBtn.h = hardBtn.h = 46;
-  jamBtn.y = makeBtn.y = hardBtn.y = playBtn.y + playBtn.h + 68;
-  hardBtn.x = W / 2 - bw3 * 1.5 - 8;
-  jamBtn.x = W / 2 - bw3 / 2;
-  makeBtn.x = W / 2 + bw3 / 2 + 8;
+  const bw4 = Math.min(122, (W - 72) / 4);
+  jamBtn.w = makeBtn.w = hardBtn.w = songBtn.w = bw4;
+  jamBtn.h = makeBtn.h = hardBtn.h = songBtn.h = 46;
+  jamBtn.y = makeBtn.y = hardBtn.y = songBtn.y = playBtn.y + playBtn.h + 68;
+  const r0 = W / 2 - (bw4 * 4 + 24) / 2;
+  songBtn.x = r0;
+  hardBtn.x = r0 + bw4 + 8;
+  jamBtn.x = r0 + (bw4 + 8) * 2;
+  makeBtn.x = r0 + (bw4 + 8) * 3;
 
   // Four across: hear it, wipe it, copy it, leave.
   const cw = Math.min(120, (W - 60) / 4);
@@ -502,6 +517,7 @@ const REPLAY = 4;
 const COMPOSE = 5;
 const JAM = 6;
 const BRIEF = 7;
+const PICK = 8;
 
 let phase = TITLE;
 let phaseAt = 0; // audio-clock time this phase began
@@ -514,6 +530,9 @@ let offs: number[] = [];
 let hgt: number[] = [];
 let hardcore = false;
 let compHard = false; // does the pattern being written use heights?
+// A song is a pattern with a fixed order, so it rides the whole challenge path --
+// only the growth step differs: take the composer's next note instead of a random one.
+let song: { name: string; seq: number[]; offs: number[] } = null;
 
 // Where the hold actually changes anything. Normal play is deliberately one height:
 // holding does nothing, so there is exactly one thing to get right.
@@ -637,7 +656,13 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
     mult = multFor(streak);
   }
 
-  if (keep) {
+  if (song && !keep) {
+    // Reveal the tune a note at a time; the ramp is the same, the notes are written.
+    const n = Math.min(song.seq.length, seq.length ? seq.length + (grow ? 1 : 0) : 2);
+    seq = song.seq.slice(0, n);
+    offs = song.offs.slice(0, n);
+    hgt = seq.map(() => 0);
+  } else if (keep) {
     // a pattern arrived from someone else -- play it as given
   } else if (!seq.length) {
     seq = [(Math.random() * COUNT) | 0, (Math.random() * COUNT) | 0];
@@ -1464,6 +1489,12 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       enterJam();
       return;
     }
+    if (inRect(x, y, songBtn)) {
+      ensureAudio();
+      phase = PICK;
+      return;
+    }
+    song = null; // any other way in is not a song run
     if (inRect(x, y, hardBtn)) {
       if (sharedIn) {
         // Arriving by link shouldn't be a dead end -- offer your own game too. Drop
@@ -1496,6 +1527,22 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       else if (sharedIn && taps.length) startReplay((ensureAudio(), ac.currentTime));
       else if (sharedIn) startChallenge();
       else startRun();
+    }
+    return;
+  }
+
+  if (phase === PICK) {
+    if (inRect(x, y, restartBtn)) {
+      phase = TITLE;
+      return;
+    }
+    for (let i = 0; i < SONGS.length; i++) {
+      if (!inRect(x, y, songRect(i))) continue;
+      song = songAt(i);
+      hardcore = false;
+      seq = [];
+      startRun();
+      return;
     }
     return;
   }
@@ -2311,6 +2358,7 @@ function frame(nowMs: number) {
 
     // The herd is live here: hearing the five voices before being graded on them
     // is the cheapest tutorial there is.
+    btn(songBtn, "SONGS");
     if (sharedIn) btn(hardBtn, "NEW GAME");
     else {
       btn(hardBtn, "");
@@ -2339,6 +2387,17 @@ function frame(nowMs: number) {
 
     // Demoted to small print. As a shout it out-competed the actual call to action.
     text("turn on yer sound", W / 2, H - 20, Math.min(16, W / 30), 0.42);
+    return;
+  }
+
+  if (phase === PICK) {
+    text("songs", W / 2, H * 0.16, 26, 0.85);
+    text("real tunes, revealed a note at a time", W / 2, H * 0.16 + 26, 14, 0.45);
+    for (let i = 0; i < SONGS.length; i++) {
+      const s = songAt(i);
+      choice(songRect(i), s.name, `${s.seq.length} notes`, false);
+    }
+    btn(restartBtn, "BACK", undefined, QUIET);
     return;
   }
 
@@ -2586,7 +2645,9 @@ function frame(nowMs: number) {
   text(
     // Everything about the run on one line, each part labelled. An unlabelled number
     // floating at the top told you nothing and collided with the round-end panel.
-    `${hardcore ? "HARDCORE   " : ""}${score} pts   ${seq.length} notes${
+    `${song ? song.name + "   " : hardcore ? "HARDCORE   " : ""}${score} pts   ${seq.length}/${
+      song ? song.seq.length : seq.length
+    } notes${
       mult > 1 ? `   x${mult.toFixed(1)}` : ""
     }   best ${best}`,
     W / 2,
