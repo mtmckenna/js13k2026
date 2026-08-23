@@ -294,7 +294,6 @@ function songRect(i: number) {
 let shareUrl = "";
 let shareWhat = "";
 let copiedAt = -9;
-let restartArm = -1; // restart asks for confirmation; this is when that offer expires
 
 function inRect(x: number, y: number, r: { x: number; y: number; w: number; h: number }) {
   return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -680,6 +679,7 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
   schedIdx = visIdx = 0;
   clickIdx = round === 0 ? -LEADIN : -LEADIN_NEXT; // click through the countdown to set tempo
   cued = false;
+  midRestart = false;
   combo = 0;
   pending.length = 0;
   bows.length = 0;
@@ -1151,7 +1151,6 @@ function startChallenge() {
     round = 0;
     accuracy = 0;
     flourish = 0;
-    restartArm = -1;
     newRound(ac.currentTime, true, true);
   };
   waitForClock(go);
@@ -1169,7 +1168,6 @@ function startRun() {
     accuracy = 0;
     flourish = 0;
     round = 0;
-    restartArm = -1;
     streak = 0;
     mult = 1;
     retries = 0;
@@ -1379,10 +1377,20 @@ function shareRun() {
   copyLink(runUrl(), H * 0.44);
 }
 
-function pokeRestart() {
-  const now = ac ? ac.currentTime : 0;
-  if (restartArm > 0 && now < restartArm) startRun();
-  else restartArm = now + 2.5;
+// Restarts the PHRASE, not the run. Fumbling one round should cost the streak, the
+// way TRY AGAIN does -- not the whole run and every point in it. HOME is the way out;
+// this is the way back to the top of the level. Nothing is destroyed, so no
+// confirmation step either.
+// Doesn't restart on the spot -- offers the same two ways back in that the round-end
+// screen does, because "start this phrase over" and "let me hear it first" are
+// different needs and only you know which one you're in.
+let midRestart = false;
+
+function restartLevel() {
+  if (!ac || !seq.length || phase === GRADE) return;
+  midRestart = true;
+  phase = GRADE;
+  phaseAt = ac.currentTime;
 }
 
 canvas.addEventListener("pointerdown", (e: PointerEvent) => {
@@ -1566,8 +1574,8 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
 
   if (phase === REPLAY) return; // let it play out
 
-  if (inRect(x, y, restartBtn)) {
-    pokeRestart();
+  if (inRect(x, y, restartBtn) && (phase === CALL || phase === RESPOND || phase === GRADE)) {
+    restartLevel();
     return;
   }
   if (shareUrl && inRect(x, y, copyRect())) {
@@ -1584,14 +1592,13 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
     doCopy();
     return;
   }
-  restartArm = -1; // any tap elsewhere withdraws the offer
 
   if (phase === GRADE) {
     // Guard against the last note of a phrase bleeding into the choice screen.
     const now = ac.currentTime;
     if (now < phaseAt + 0.4) return;
     if (inRect(x, y, againBtn)) newRound(now, false);
-    else if (grew && inRect(x, y, nextBtn)) newRound(now, true);
+    else if (grew && !midRestart && inRect(x, y, nextBtn)) newRound(now, true);
     else if (inRect(x, y, blindBtn)) retryBlind(now);
     return;
   }
@@ -1644,16 +1651,16 @@ addEventListener("keydown", (e: KeyboardEvent) => {
   if (phase === GRADE) {
     const now = ac.currentTime;
     if (now < phaseAt + 0.4) return;
-    if (e.key === "Enter" || e.key === " ") newRound(now, grew);
+    if (e.key === "Enter" || e.key === " ") newRound(now, grew && !midRestart);
     else if (e.key.toLowerCase() === "a") newRound(now, false);
     else if (e.key.toLowerCase() === "g") retryBlind(now);
-    else if (e.key.toLowerCase() === "r") pokeRestart();
+    else if (e.key.toLowerCase() === "r") restartLevel();
     return;
   }
   if (i >= 0) {
     tap(i);
     grab(e.key);
-  } else if (e.key.toLowerCase() === "r") pokeRestart();
+  } else if (e.key.toLowerCase() === "r") restartLevel();
 });
 
 // --- phase machine -------------------------------------------------------
@@ -2623,7 +2630,7 @@ function frame(nowMs: number) {
       text("your turn", W / 2, H * 0.2, 22, 0.6);
     }
   } else {
-    const big = message === "PERFECT";
+    const big = message === "PERFECT" && !midRestart;
     // Scrim: at high scores the celebration is bright enough to swallow the UI.
     const pw = Math.min(W - 32, 520);
     const py = H * 0.2 - 42;
@@ -2631,13 +2638,20 @@ function frame(nowMs: number) {
     ctx.fillStyle = "rgba(12,9,28,.62)";
     ctx.fill();
 
-    text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
-    text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
-    if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
+    if (midRestart) {
+      text("start this phrase over", W / 2, H * 0.2, 26, 0.85);
+      text("your score and streak carry on", W / 2, H * 0.2 + 30, 14, 0.45);
+    } else {
+      text(message, W / 2, H * 0.2, big ? 46 : 28, big ? 0.95 : 0.8);
+      text(`${(accuracy * 100) | 0}% match`, W / 2, H * 0.2 + 34, 18, 0.55);
+      if (combo) text(`${combo} midair bonus`, W / 2, H * 0.2 + 56, 15, 0.5);
+    }
 
-    choice(blindBtn, "TRY AGAIN", "same phrase, play now", !grew);
+    choice(blindBtn, "TRY AGAIN", "same phrase, play now", midRestart || !grew);
     choice(againBtn, "HEAR IT AGAIN", "the herd plays it first", false);
-    if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
+    // No NEXT from a mid-round restart -- you haven't finished the phrase.
+    if (midRestart) choice(nextBtn, "NEXT!", "finish the phrase first", false, true);
+    else if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
     else choice(nextBtn, "NEXT!", "needs 50%", false, true);
 
     // The copy panel does NOT belong in here -- stacked under the choices it pushed
@@ -2650,12 +2664,13 @@ function frame(nowMs: number) {
   }
 
   if (round <= 1 && phase === CALL && now - (phaseAt - BEAT * LEADIN) < 6) {
-    text("sound on?", W / 2, H - 44, 15, 0.4);
+    // H-44 is inside the utility row now that it lives along the bottom; this sits in
+    // the clear band between the herd and the buttons.
+    text("sound on?", W / 2, H - 92, 15, 0.4);
   }
 
   {
-    const armed = restartArm > 0 && now < restartArm;
-    btn(restartBtn, armed ? "SURE?" : "RESTART", undefined, armed ? GOLD : QUIET);
+    btn(restartBtn, "RESTART", undefined, QUIET);
     btn(beatBtn, beatOn ? "BEAT ON" : "BEAT OFF", undefined, QUIET);
     btn(homeBtn, "HOME", undefined, QUIET);
     btn(shareBtn, now - copiedAt < 3 ? "COPIED" : "COPY", undefined, QUIET);
