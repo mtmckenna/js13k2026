@@ -1563,6 +1563,20 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
 // the finger crosses into its column, and again only if you leave and come back.
 // Both, because iOS fires touchend first and click may be suppressed; whichever
 // arrives first wins and the other finds nothing pending.
+// A long press over the row is a high jump. iOS reads it as the start of a text
+// selection and raises the loupe -- preventDefault on pointerdown doesn't stop that,
+// because the loupe comes off the touch default, not the pointer one.
+//
+// Scoped to the row, and skipped entirely while the share panel is up: killing the
+// touch default there would take the click that the clipboard write depends on.
+canvas.addEventListener(
+  "touchstart",
+  (e: TouchEvent) => {
+    if (!linkShown && e.touches[0] && overHerd(e.touches[0].clientY)) e.preventDefault();
+  },
+  { passive: false }
+);
+
 canvas.addEventListener("click", () => runPendingCopy("click"));
 canvas.addEventListener("touchend", () => runPendingCopy("touchend"));
 

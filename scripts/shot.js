@@ -20,6 +20,7 @@
 //   --keys <spec>    comma-separated holds; "+" chords them. e.g. ArrowRight:500
 //   --click <spec>   ";"-separated taps: "450,420;150,500" -- ":400" holds, "@400" waits after
 //   --drag <spec>    ";"-separated swipes: "120,505>790,505" -- runs after clicks
+//   --touch          deliver clicks/drags as touch events, not mouse
 //   --settle <ms>    settle after input      (default 300)
 //   --timeout <ms>   overall bail-out        (default 30000)
 //
@@ -38,6 +39,9 @@ const WAIT = int(argv.wait, 500);
 const SETTLE = int(argv.settle, 300);
 const TIMEOUT = int(argv.timeout, 30000);
 const CHROME = process.env.CHROME ?? "google-chrome";
+// Mouse input never exercises touchstart/touchend, so an iOS-only bug in a touch
+// handler is invisible from here. This turns --click and --drag into real touches.
+const TOUCH = !!argv.touch;
 
 // Arrow keys and friends need an explicit virtual keycode or the page sees nothing.
 const KEYS = {
@@ -129,7 +133,8 @@ try {
 	await send("Page.enable");
 	// Force the exact viewport. Headless window size includes chrome, so without this
 	// the png comes back short -- and it lets --size emulate the iPad for layout checks.
-	await send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: false });
+	await send("Emulation.setDeviceMetricsOverride", { width: W, height: H, deviceScaleFactor: 1, mobile: TOUCH });
+	if (TOUCH) await send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
 
 	const loaded = once(ws, "Page.loadEventFired");
 	await send("Page.navigate", { url: URL_ });
@@ -151,11 +156,18 @@ try {
 		const [pos, hold] = step.split("@");
 		const [xy, press] = pos.split(":"); // "450,420:400" holds the button 400ms
 		const [cx, cy] = xy.split(",").map(Number);
-		const base = { x: cx, y: cy, button: "left", clickCount: 1 };
-		await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base, buttons: 0 });
-		await send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 });
-		await sleep(int(press, 35));
-		await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 });
+		if (TOUCH) {
+			const pt = [{ x: cx, y: cy, id: 1, radiusX: 12, radiusY: 12, force: 1 }];
+			await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: pt });
+			await sleep(int(press, 35));
+			await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		} else {
+			const base = { x: cx, y: cy, button: "left", clickCount: 1 };
+			await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base, buttons: 0 });
+			await send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 });
+			await sleep(int(press, 35));
+			await send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 });
+		}
 		await sleep(int(hold, 260));
 	}
 
