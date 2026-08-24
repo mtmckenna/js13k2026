@@ -1600,6 +1600,7 @@ for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
 addEventListener("keyup", (e: KeyboardEvent) => release(e.key));
 
 addEventListener("keydown", (e: KeyboardEvent) => {
+  kbd = true;
   if (e.repeat) return;
   const i = "12345".indexOf(e.key);
   if (phase === TITLE) {
@@ -1919,52 +1920,14 @@ function wonky(str: string, cx: number, cy: number, size: number, col: string, b
   }
 }
 
-// Sky ramps as stops we can sample, since bands need the colour at a point rather
-// than a gradient object. [position, r, g, b].
-//
-// RGB, not HSL. Lerping hue between the warm stops runs 226 to 24 the long way round
-// through 150 and turns the whole upper sky green -- the same lime-horizon bug the
-// cross-fade below was written to avoid, walked straight back into by sampling the
-// ramp in a different space than createLinearGradient did.
-const COLD = [
-  [0, 10, 14, 36],
-  [0.55, 23, 43, 74],
-  [1, 41, 94, 117],
-];
-const WARM = [
-  [0, 30, 42, 82],
-  [0.55, 125, 79, 49],
-  [1, 216, 144, 49],
-];
-
-const SKYN = 11;
-
-// Bands get shorter toward the horizon. Even bands looked like a test card; stacking
-// them tighter low down reads as distance, the way the hills behind them do. The
-// exponent must be under 1 for that -- over 1 piles the tall bands at the bottom and
-// drops a single flat slab behind the row.
-function bandT(i: number) {
-  return Math.pow(i / SKYN, 0.7);
-}
-
-function band(stops: number[][], alpha: number) {
-  for (let i = 0; i < SKYN; i++) {
-    const t0 = bandT(i);
-    const y0 = t0 * groundY;
-    // Last band runs to the bottom of the canvas: the ground is drawn over it, but on
-    // a short screen groundY can sit above H and a gap would show through.
-    const y1 = i === SKYN - 1 ? H : bandT(i + 1) * groundY;
-    const t = (t0 + bandT(i + 1)) / 2;
-    const j = t < 0.55 ? 0 : 1;
-    const a = stops[j];
-    const b = stops[j + 1];
-    const k = (t - a[0]) / (b[0] - a[0]);
-    ctx.fillStyle = `rgba(${a[1] + (b[1] - a[1]) * k},${a[2] + (b[2] - a[2]) * k},${
-      a[3] + (b[3] - a[3]) * k
-    },${alpha})`;
-    ctx.fillRect(0, y0, W, y1 - y0 + 1);
-  }
-}
+// The whole sky is one flat colour that crossfades between the storm and a clear
+// evening. RGB, not HSL: lerping hue between these two runs the long way round
+// through 150 and turns the sky green on the way -- the lime horizon again.
+const STORM = [21, 34, 64];
+const CLEAR = [198, 128, 58];
+// Eased rather than tracking flourish directly, which steps per judged note. The
+// weather should turn, not cut.
+let skyMix = 0;
 
 function spaced(s: string, x: number, y: number, size: number, col: string, weight: number) {
   ctx.letterSpacing = `${Math.max(1, size * 0.09)}px`;
@@ -2110,6 +2073,17 @@ function copyRect() {
 // it already found two separate causes -- no API over http, then NotAllowedError
 // from writing outside a click.
 const DEBUG = location.search.indexOf("debug") >= 0;
+
+// A wide screen spreads the row far enough apart that a mouse can't cross it between
+// beats. 1..5 were always wired; they were just invisible, so nobody knew to use the
+// one input fast enough for the tempo.
+//
+// Hidden only where the pointer is coarse -- a phone or a bare tablet. Asking for
+// (hover:hover) instead looks more precise but fails the wrong way: anywhere it
+// misreports, the keys stay secret and there is nothing to press to find out they
+// exist. Any keypress also arms it, which is what an iPad with a keyboard attached
+// ends up going through, since that still reports a coarse pointer.
+let kbd = !matchMedia("(pointer:coarse)").matches;
 let copyDiag = "";
 // Safari only honours a clipboard write from a click. We act on pointerdown, which
 // it treats as un-activated -- hence NotAllowedError on https where the API exists.
@@ -2195,17 +2169,11 @@ function frame(nowMs: number) {
   // clear evening, the cloud bank thins, and the lightning backs off. The herd is
   // driving the weather away rather than summoning it.
   const lift = phase === TITLE ? 0 : flourish;
-  // Flat bands, not a smooth ramp. Everything else on screen is hard-edged flat
-  // colour -- chamfered slabs, polygon clouds and hills, single-fill unicorns -- so a
-  // continuous gradient was the one soft thing in the scene and read as a different
-  // drawing than the rest of it.
-  //
-  // Two ramps cross-faded, NOT one with interpolated hue: blue 198 to gold 40 travels
-  // through green, which turned the horizon lime. Alpha blending goes straight there.
-  // Clearing evening, not midday -- the additive ribbons need something darker than
-  // daylight to read against.
-  band(COLD, 1);
-  if (lift > 0.01) band(WARM, lift);
+  skyMix += (lift - skyMix) * Math.min(1, dt * 1.6);
+  ctx.fillStyle = `rgb(${STORM[0] + (CLEAR[0] - STORM[0]) * skyMix},${
+    STORM[1] + (CLEAR[1] - STORM[1]) * skyMix
+  },${STORM[2] + (CLEAR[2] - STORM[2]) * skyMix})`;
+  ctx.fillRect(0, 0, W, H);
 
 
   for (const c of clouds) {
@@ -2438,6 +2406,19 @@ function frame(nowMs: number) {
     u.bob += dt * 2.2;
     drawUnicorn(u.homeX, groundY - 14 - Math.abs(Math.sin(u.bob)) * 3, u.hue, 1, 0, u.lit, u.gait);
   }
+
+  // Keycaps sit on the dark ground under each unicorn, tinted to its hue so the key
+  // and the unicorn read as the same thing.
+  if (kbd)
+    for (let i = 0; i < COUNT; i++) {
+      chamfer(herd[i].homeX - 11, groundY + 24, 22, 20, 5);
+      ctx.fillStyle = `hsla(${HUES[i]},70%,60%,.16)`;
+      ctx.fill();
+      ctx.fillStyle = `hsla(${HUES[i]},80%,72%,.85)`;
+      ctx.font = "700 13px system-ui,-apple-system,sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`${i + 1}`, herd[i].homeX, groundY + 38);
+    }
 
   // --- hud ---
   layoutUtils();
