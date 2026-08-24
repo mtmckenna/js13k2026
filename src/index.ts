@@ -1919,6 +1919,53 @@ function wonky(str: string, cx: number, cy: number, size: number, col: string, b
   }
 }
 
+// Sky ramps as stops we can sample, since bands need the colour at a point rather
+// than a gradient object. [position, r, g, b].
+//
+// RGB, not HSL. Lerping hue between the warm stops runs 226 to 24 the long way round
+// through 150 and turns the whole upper sky green -- the same lime-horizon bug the
+// cross-fade below was written to avoid, walked straight back into by sampling the
+// ramp in a different space than createLinearGradient did.
+const COLD = [
+  [0, 10, 14, 36],
+  [0.55, 23, 43, 74],
+  [1, 41, 94, 117],
+];
+const WARM = [
+  [0, 30, 42, 82],
+  [0.55, 125, 79, 49],
+  [1, 216, 144, 49],
+];
+
+const SKYN = 11;
+
+// Bands get shorter toward the horizon. Even bands looked like a test card; stacking
+// them tighter low down reads as distance, the way the hills behind them do. The
+// exponent must be under 1 for that -- over 1 piles the tall bands at the bottom and
+// drops a single flat slab behind the row.
+function bandT(i: number) {
+  return Math.pow(i / SKYN, 0.7);
+}
+
+function band(stops: number[][], alpha: number) {
+  for (let i = 0; i < SKYN; i++) {
+    const t0 = bandT(i);
+    const y0 = t0 * groundY;
+    // Last band runs to the bottom of the canvas: the ground is drawn over it, but on
+    // a short screen groundY can sit above H and a gap would show through.
+    const y1 = i === SKYN - 1 ? H : bandT(i + 1) * groundY;
+    const t = (t0 + bandT(i + 1)) / 2;
+    const j = t < 0.55 ? 0 : 1;
+    const a = stops[j];
+    const b = stops[j + 1];
+    const k = (t - a[0]) / (b[0] - a[0]);
+    ctx.fillStyle = `rgba(${a[1] + (b[1] - a[1]) * k},${a[2] + (b[2] - a[2]) * k},${
+      a[3] + (b[3] - a[3]) * k
+    },${alpha})`;
+    ctx.fillRect(0, y0, W, y1 - y0 + 1);
+  }
+}
+
 function spaced(s: string, x: number, y: number, size: number, col: string, weight: number) {
   ctx.letterSpacing = `${Math.max(1, size * 0.09)}px`;
   ctx.fillStyle = col;
@@ -2148,25 +2195,17 @@ function frame(nowMs: number) {
   // clear evening, the cloud bank thins, and the lightning backs off. The herd is
   // driving the weather away rather than summoning it.
   const lift = phase === TITLE ? 0 : flourish;
-  const sky = ctx.createLinearGradient(0, 0, 0, groundY);
-  // Two gradients cross-faded, NOT one gradient with interpolated hue: blue 198 to
-  // gold 40 travels through green, which turned the horizon lime. Alpha blending goes
-  // straight there. Clearing evening, not midday -- the additive ribbons need
-  // something darker than daylight to read against.
-  sky.addColorStop(0, "hsl(230,58%,9%)");
-  sky.addColorStop(0.55, "hsl(216,52%,19%)");
-  sky.addColorStop(1, "hsl(198,48%,31%)");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H);
-
-  if (lift > 0.01) {
-    const warm = ctx.createLinearGradient(0, 0, 0, groundY);
-    warm.addColorStop(0, `hsla(226,46%,22%,${lift})`);
-    warm.addColorStop(0.55, `hsla(24,44%,34%,${lift * 0.85})`);
-    warm.addColorStop(1, `hsla(34,68%,52%,${lift * 0.9})`);
-    ctx.fillStyle = warm;
-    ctx.fillRect(0, 0, W, H);
-  }
+  // Flat bands, not a smooth ramp. Everything else on screen is hard-edged flat
+  // colour -- chamfered slabs, polygon clouds and hills, single-fill unicorns -- so a
+  // continuous gradient was the one soft thing in the scene and read as a different
+  // drawing than the rest of it.
+  //
+  // Two ramps cross-faded, NOT one with interpolated hue: blue 198 to gold 40 travels
+  // through green, which turned the horizon lime. Alpha blending goes straight there.
+  // Clearing evening, not midday -- the additive ribbons need something darker than
+  // daylight to read against.
+  band(COLD, 1);
+  if (lift > 0.01) band(WARM, lift);
 
 
   for (const c of clouds) {
