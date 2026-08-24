@@ -1160,13 +1160,20 @@ function waitForClock(go: () => void, tries = 6) {
   else starting = false; // the paused overlay explains it; another tap retries
 }
 
+// The row is an instrument on these screens and scenery on the rest. Hands off while
+// the unicorns count in and play -- a stray note muddles the pattern you're trying to
+// memorise, and nothing tapped then could count anyway -- and REPLAY, GRADE, PICK and
+// BRIEF are button screens that swallow the tap before it ever reaches a unicorn.
+// Shared with the cursor, so the hand appears exactly where a tap makes a sound.
+function rowLive() {
+  return phase === TITLE || phase === RESPOND || phase === COMPOSE || phase === JAM;
+}
+
 function tap(i: number) {
   ensureAudio();
   const now = ac.currentTime;
 
-  // Hands off while the herd counts in and plays: a stray note muddles the pattern
-  // you're trying to memorise, and nothing tapped here could count anyway.
-  if (phase === CALL) return;
+  if (!rowLive()) return;
 
   if (phase !== RESPOND) {
     note(NOTES[i], herd[i].voice, now, 0.2);
@@ -2176,7 +2183,9 @@ function frame(nowMs: number) {
   // end of the frame instead looks more natural and doesn't work: most screens return
   // early out of the HUD once they've drawn, so the check never runs on them. A frame
   // of lag on a cursor is invisible; a cursor that only works on some screens is not.
-  const over = hot.some((r) => inRect(mx, my, r));
+  // The unicorns are clickable too, across the whole band -- tapping the gap above a
+  // unicorn plays it, so the hand belongs there as much as on the bodies.
+  const over = (rowLive() && overHerd(my)) || hot.some((r) => inRect(mx, my, r));
   if (over !== curPointer) {
     curPointer = over;
     canvas.style.cursor = over ? "pointer" : "";
