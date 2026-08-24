@@ -1585,6 +1585,10 @@ canvas.addEventListener("click", () => runPendingCopy("click"));
 canvas.addEventListener("touchend", () => runPendingCopy("touchend"));
 
 canvas.addEventListener("pointermove", (e: PointerEvent) => {
+  if (e.pointerType === "mouse") {
+    mx = e.clientX;
+    my = e.clientY;
+  }
   if (!slideCol.has(e.pointerId)) return;
   if (!overHerd(e.clientY)) return;
   const c = column(e.clientX);
@@ -1944,12 +1948,22 @@ function spaced(s: string, x: number, y: number, size: number, col: string, weig
 
 // One button, drawn everywhere. A hard un-blurred shadow reads as a printed slab
 // rather than a soft web widget.
+// Every button on every screen goes through btn(), so it can register itself as
+// hoverable as it draws. Anything phase-specific -- a second list of rects to hit-test
+// for the cursor -- would be a copy that drifts the first time a screen changes.
+// LOCKED is left out: a greyed NEXT! is not clickable and shouldn't claim to be.
+const hot: { x: number; y: number; w: number; h: number }[] = [];
+let mx = -1;
+let my = -1;
+let curPointer = false;
+
 function btn(
   r: { x: number; y: number; w: number; h: number },
   label: string,
   sub?: string,
   tone: number = PLAIN
 ) {
+  if (tone !== LOCKED) hot.push(r);
   const c = Math.min(13, r.h * 0.3);
   const off = tone === QUIET ? 2 : 4;
 
@@ -2157,6 +2171,17 @@ function text(s: string, x: number, y: number, size: number, alpha: number) {
 let last = 0;
 function frame(nowMs: number) {
   requestAnimationFrame(frame);
+
+  // Cursor from what the LAST frame drew, then start a fresh list. Doing it at the
+  // end of the frame instead looks more natural and doesn't work: most screens return
+  // early out of the HUD once they've drawn, so the check never runs on them. A frame
+  // of lag on a cursor is invisible; a cursor that only works on some screens is not.
+  const over = hot.some((r) => inRect(mx, my, r));
+  if (over !== curPointer) {
+    curPointer = over;
+    canvas.style.cursor = over ? "pointer" : "";
+  }
+  hot.length = 0;
   const dt = Math.min((nowMs - last) / 1000, 0.05);
   last = nowMs;
   const now = ac ? ac.currentTime : 0;
