@@ -2020,7 +2020,7 @@ function slotColor(i: number, cursor: number) {
 // tall phone HOME landed on top of the round-end panel. Laid out per phase, and called
 // from both drawing and hit-testing so the two can never disagree.
 function layoutUtils() {
-  const n = phase === JAM ? 3 : phase === COMPOSE ? 1 : 3;
+  const n = phase === COMPOSE ? 2 : 3;
   const uw = Math.min(96, (W - 40) / n - 8);
   const y = H - 66;
   const x0 = (W - (n * uw + (n - 1) * 8)) / 2;
@@ -2030,7 +2030,11 @@ function layoutUtils() {
     Object.assign(beatBtn, at(1));
     Object.assign(shareBtn, at(2));
   } else if (phase === COMPOSE) {
+    // The hardcore toggle was drawn and hit-tested against a shareBtn that COMPOSE
+    // never positioned, so it sat at 0x0: the whole height axis was unreachable from
+    // the composer even though the press/hold/encode chain behind it all worked.
     Object.assign(beatBtn, at(0));
+    Object.assign(shareBtn, at(1));
   } else {
     Object.assign(restartBtn, at(0));
     Object.assign(beatBtn, at(1));
