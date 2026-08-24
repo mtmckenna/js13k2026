@@ -600,7 +600,7 @@ let flourish = 0; // 0..1 -- drives how big everything gets
 let message = "";
 let score = 0;
 let grew = true; // did the last round earn a new note?
-const PASS = ["nice", "good ear", "well played", "the herd approves"];
+const PASS = ["nice", "good ear", "well played", "the unicorns approve"];
 const FAIL = ["not quite", "so close", "almost had it"];
 let combo = 0; // midair crossings this round
 let cued = false; // "your turn" cue scheduled?
@@ -2610,13 +2610,13 @@ function frame(nowMs: number) {
     const toTurn = (respondStart() - now) / BEAT;
     if (toCall > 0) {
       // Countdown to the herd playing. Previously the first note just arrived.
-      countdown("the herd plays in", toCall);
+      countdown("the unicorns play in", toCall);
     } else if (REST > 1 && visIdx >= seq.length && toTurn <= REST) {
       countdown("your turn in", toTurn);
     } else if (sharedIn && sharedName && seq.length === sharedLen) {
       text(sharedName, W / 2, H * 0.2, 22, 0.7);
     } else {
-      text("listen", W / 2, H * 0.2, 22, 0.5);
+      text("watch the unicorns", W / 2, H * 0.2, 20, 0.55);
     }
   } else if (phase === REPLAY) {
     // A shared jam is a performance, not a replay of a round -- it has no pattern and
@@ -2662,7 +2662,7 @@ function frame(nowMs: number) {
     }
 
     choice(blindBtn, "TRY AGAIN", "same pattern, play now", midRestart || !grew);
-    choice(againBtn, "HEAR IT AGAIN", "the herd plays it first", false);
+    choice(againBtn, "HEAR IT AGAIN", "the unicorns play it first", false);
     // No NEXT from a mid-round restart -- you haven't finished the pattern.
     if (midRestart) choice(nextBtn, "NEXT!", "finish the pattern first", false, true);
     else if (grew) choice(nextBtn, "NEXT!", "one note longer", true);
@@ -2687,8 +2687,9 @@ function frame(nowMs: number) {
     ctx.fillRect(0, 0, W, H);
     text("paused", W / 2, H * 0.46, 30, 0.9);
     text("tap anywhere to resume", W / 2, H * 0.46 + 30, 18, 0.6);
-    // Surfaced deliberately: if a tap still won't clear this, the state name says why.
-    text(`audio: ${ac.state}`, W / 2, H * 0.46 + 56, 13, 0.35);
+    // If a tap still won't clear this, the state name says why -- but that is a
+    // diagnostic, not something a player has any use for.
+    if (DEBUG) text(`audio: ${ac.state}`, W / 2, H * 0.46 + 56, 13, 0.35);
   }
 
   // A shared jam is a performance -- there is no run behind it, so the score line is
