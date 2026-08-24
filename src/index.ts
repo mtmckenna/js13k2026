@@ -1897,8 +1897,8 @@ const LOCKED = 2;
 const QUIET = 3;
 
 // Letters knocked off true, one at a time. HARDCORE should look like it's shouting.
-function wonkyHard() {
-  wonky("HARDCORE", hardBtn.x + hardBtn.w / 2, hardBtn.y + 30, Math.min(17, hardBtn.w / 7.4), "", true);
+function wonkyHard(r: { x: number; y: number; w: number; h: number }) {
+  wonky("HARDCORE", r.x + r.w / 2, r.y + r.h * 0.65, Math.min(17, r.w / 7.4), "", true);
 }
 
 function wonky(str: string, cx: number, cy: number, size: number, col: string, bow?: boolean) {
@@ -2432,7 +2432,7 @@ function frame(nowMs: number) {
     if (sharedIn) btn(hardBtn, "NEW GAME");
     else {
       btn(hardBtn, "");
-      wonkyHard();
+      wonkyHard(hardBtn);
     }
     btn(jamBtn, "JAM");
     btn(makeBtn, "PATTERN");
@@ -2507,7 +2507,13 @@ function frame(nowMs: number) {
 
   if (phase === COMPOSE) {
     text("make a pattern", W / 2, H * 0.16, 24, 0.85);
-    btn(shareBtn, compHard ? "HARDCORE" : "NORMAL", undefined, compHard ? GOLD : QUIET);
+    // Armed hardcore shouts in the same knocked-off letters it does on the title, so
+    // the two are recognisably the same mode rather than two features sharing a word.
+    // Dark, not gold: the rainbow letters need a dark slab behind them to read, which
+    // is exactly why the title screen's HARDCORE is a plain button too. The letters
+    // are the "armed" signal -- nothing else on this screen shouts.
+    btn(shareBtn, compHard ? "" : "NORMAL", undefined, compHard ? PLAIN : QUIET);
+    if (compHard) wonkyHard(shareBtn);
 
     // the pattern so far, spaced by time
     if (seq.length) {
