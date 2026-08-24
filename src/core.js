@@ -113,6 +113,27 @@ export function flightFor(power) {
   return 0.95 + power * 0.42;
 }
 
+// The drawn size of a unicorn, from the herd spacing. Clamped at both ends: floored
+// so it never shrinks below legible on a narrow phone, capped so a wide desktop
+// doesn't get cartoon horses.
+export const SIZE_MIN = 1.05;
+export function unicornScale(slot) {
+  return Math.max(SIZE_MIN, Math.min(1.95, slot * 0.0105));
+}
+
+// Everything drawn in ink -- ribbon strokes, and anything else measured in bare
+// pixels -- has to scale with the unicorn it comes off, or it isn't the same picture
+// on two screens. A 3px stroke behind a 1.05-scale unicorn is a bold streak; behind a
+// 1.95-scale one it's a thread.
+//
+// Normalised against the SMALLEST unicorn, not a middling one, so a phone keeps
+// exactly the streak it has today and wider screens thicken to match it. Dividing by
+// the midpoint is equally screen-independent but quietly restyles the phone, which is
+// the screen the look was tuned on.
+export function inkScale(slot) {
+  return unicornScale(slot) / SIZE_MIN;
+}
+
 export function launchParams(H, slot, power) {
   const peak = H * (0.2 + power * 0.34);
   const flight = flightFor(power);

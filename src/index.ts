@@ -22,9 +22,11 @@ import {
   encodeJam,
   encodeRun as coreEncode,
   flightFor,
+  inkScale,
   heat as coreHeat,
   judgeSlot,
   launchParams,
+  unicornScale,
   NOTE_POWER,
   tierFor,
   timingScore,
@@ -45,6 +47,7 @@ const COUNT = NOTES.length;
 // Sized from the herd spacing so the whole scene scales together, clamped so phones
 // don't end up with ants and wall displays with giants.
 let SIZE = 1.55;
+let INK = 1; // ribbon stroke scale, so a streak is the same picture on every screen
 let HIT = 59;
 const BOUNCE = 0.96;
 
@@ -329,7 +332,8 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   groundY = H * 0.82;
   slot = W / (COUNT + 1);
-  SIZE = Math.max(1.05, Math.min(1.95, slot * 0.0105));
+  SIZE = unicornScale(slot);
+  INK = inkScale(slot);
   // Collision radius in herd-spacing units, floored so it never drops below the
   // drawn body on a narrow phone.
   HIT = Math.max(34, slot * 0.4);
@@ -2324,10 +2328,10 @@ function frame(nowMs: number) {
     ctx.moveTo(r.pts[0], r.pts[1]);
     for (let p = 2; p < r.pts.length; p += 2) ctx.lineTo(r.pts[p], r.pts[p + 1]);
     ctx.strokeStyle = `hsla(${r.hue},95%,60%,${a * 0.28})`;
-    ctx.lineWidth = (16 * a + 3) * r.fat;
+    ctx.lineWidth = (16 * a + 3) * r.fat * INK;
     ctx.stroke();
     ctx.strokeStyle = `hsla(${r.hue},100%,78%,${a * 0.75})`;
-    ctx.lineWidth = (5 * a + 1) * r.fat;
+    ctx.lineWidth = (5 * a + 1) * r.fat * INK;
     ctx.stroke();
   }
 

@@ -167,6 +167,26 @@ test("an arc covers the same number of unicorns on every screen", () => {
   }
 });
 
+test("a streak is the same weight of line on every screen", () => {
+  // The stroke was in bare pixels while the unicorn it trails scaled with the herd
+  // spacing, so the same ribbon was a bold streak on a phone and a thread on a
+  // desktop. What has to hold is ink PER UNIT UNICORN, not ink.
+  const rel = SCREENS.map(([, W]) => {
+    const slot = W / 6;
+    return (3 * C.inkScale(slot)) / C.unicornScale(slot);
+  });
+  for (const r of rel) {
+    assert.ok(Math.abs(r - rel[0]) < 1e-9, `streak weight drifted: ${rel.join(", ")}`);
+  }
+});
+
+test("a phone keeps the streak it already had", () => {
+  // Normalising against the midpoint would be just as screen-independent and would
+  // quietly restyle the screen the look was tuned on. The small end is the anchor.
+  assert.equal(C.inkScale(360 / 6), 1);
+  assert.ok(C.inkScale(1600 / 6) > 1.5, "wide screens should thicken, not the phone thin");
+});
+
 test("gravity is derived so the arc actually lasts its flight time", () => {
   const p = C.launchParams(650, 150, 0.7);
   // apex at flight/2, back to ground at flight
