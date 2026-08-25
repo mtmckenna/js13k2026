@@ -633,7 +633,7 @@ function startReplay(now: number) {
   for (let k = 0; k < seq.length; k++) {
     const at = t0 + offs[k] * BEAT;
     note(NOTES[seq[k]], herd[seq[k]].voice, at, 0.24);
-    pending.push({ at, i: seq[k], power: 0.7 });
+    pending.push({ at, i: seq[k], power: 0.7, hi: hardcore ? hgt[k] : undefined });
   }
   const gap = (offs[offs.length - 1] + REST) * BEAT;
   for (const p of taps) {
@@ -706,7 +706,14 @@ function newRound(now: number, grow: boolean, keep?: boolean) {
 
 // Leaps queued for the future -- lets a celebration play out as a pattern rather
 // than everything firing on one frame.
-const pending: { at: number; i: number; power: number; x?: number; hue?: number }[] = [];
+const pending: {
+  at: number;
+  i: number;
+  power: number;
+  x?: number;
+  hue?: number;
+  hi?: number; // set only on the demo half, where the height is a fact to be shown
+}[] = [];
 
 // The verdict, performed. How hard the herd parties and how bright the chord is
 // both scale with the score: a scrape through should not look like a triumph.
@@ -810,6 +817,24 @@ function respondStart() {
 // player is doing right now.
 // The most recent flyer, so a press can keep hold of what it just launched.
 let lastLaunched: Flyer = null;
+
+// Height is information in hardcore, and the flight path is the only place it was
+// written down -- which fails exactly when two copies collide and knock each other
+// off their arcs. So the demo also leaves a bar at the height it MEANT to reach.
+// A bar can't be bounced.
+const marks: { x: number; y: number; hue: number; hi: number; age: number }[] = [];
+
+function mark(i: number, hi: number) {
+  marks.push({
+    x: herd[i].homeX,
+    // The same two numbers the leap itself is built from, read from core rather than
+    // restated here -- a target that disagrees with the arc is worse than no target.
+    y: groundY - (hi ? H * HIGH_F : launchParams(H, slot, NOTE_POWER).peak),
+    hue: herd[i].hue,
+    hi,
+    age: 0,
+  });
+}
 
 function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
   const { peak, flight, g, vy0, reach } = launchParams(H, slot, power);
@@ -1055,7 +1080,7 @@ function previewPattern(now: number) {
   for (let k = 0; k < seq.length; k++) {
     const at = t0 + offs[k] * BEAT;
     note(NOTES[seq[k]], herd[seq[k]].voice, at, 0.24);
-    pending.push({ at, i: seq[k], power: 0.65 });
+    pending.push({ at, i: seq[k], power: 0.65, hi: hardcore ? hgt[k] : undefined });
   }
   // Re-anchor the click to the playback so the pattern lands on the pulse.
   pulseAt = t0;
@@ -1502,7 +1527,12 @@ canvas.addEventListener("pointerdown", (e: PointerEvent) => {
       return;
     }
     if (inRect(x, y, playBtn)) {
-      hardcore = false;
+      // A shared pattern brings its own mode -- it is hardcore exactly when it carries
+      // heights. Clearing the flag unconditionally here left the herd leaping high off
+      // hgt while the player's side of hardcore was switched off: holds produced no
+      // high leap, and heights went unjudged. The challenge was impossible to match
+      // and free to get wrong.
+      if (!sharedIn) hardcore = false;
       // Same trap as starting a round: scheduling against a parked clock means the
       // notes are queued at times that never arrive, and it sits there forever.
       if (sharedJam) {
@@ -1651,8 +1681,19 @@ addEventListener("keydown", (e: KeyboardEvent) => {
 function update(now: number) {
   while (pending.length && pending[0].at <= now) {
     const q = pending.shift();
-    if (q.x === undefined) leap(q.i, q.power);
-    else launch(q.x, q.hue, q.power, Math.random() < 0.5 ? -1 : 1);
+    if (q.x !== undefined) launch(q.x, q.hue, q.power, Math.random() < 0.5 ? -1 : 1);
+    else {
+      const f = leap(q.i, q.power);
+      // A replayed or previewed demo showed no height at all, so the one place you
+      // could learn it was the live call -- the exact moment a collision can hide it.
+      if (q.hi !== undefined) {
+        mark(q.i, q.hi);
+        if (q.hi) {
+          f.armAt = now + HOLD_HIGH;
+          f.holding = true;
+        }
+      }
+    }
   }
 
   if (phase === CALL) {
@@ -1668,6 +1709,7 @@ function update(now: number) {
       // In hardcore the call shows the height too: a high note visibly soars, which is
       // the only way the player can learn what to give back.
       const f = leap(seq[visIdx], NOTE_POWER);
+      if (hardcore) mark(seq[visIdx], hgt[visIdx]);
       if (hgt[visIdx]) {
         // The herd "holds" its own note, through the very same mechanism.
         f.armAt = now + HOLD_HIGH;
@@ -2430,6 +2472,33 @@ function frame(nowMs: number) {
   ctx.fillRect(0, groundY + 16, W, H);
   ctx.fillStyle = `rgba(150,220,255,${0.18 + pulse * 0.5})`;
   ctx.fillRect(0, groundY + 16, W, 2);
+
+  // Under the flyers, so a unicorn arriving at its bar is seen landing ON it.
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const m = marks[i];
+    m.age += dt;
+    if (m.age > 1.5) {
+      marks.splice(i, 1);
+      continue;
+    }
+    // Holds full strength while the leap is in the air, then goes.
+    const a = Math.min(1, (1.5 - m.age) * 2.2);
+    const w = 26 * INK;
+    ctx.strokeStyle = `hsla(${m.hue},92%,72%,${a * 0.5})`;
+    ctx.lineWidth = 2 * INK;
+    ctx.beginPath();
+    // Two rungs for a high note, one for a low: the bar's height already says which,
+    // but only if you have the other height on screen to compare it against. The
+    // count says it on its own.
+    for (let k = 0; k <= m.hi; k++) {
+      const y = m.y + k * 7 * INK;
+      ctx.moveTo(m.x - w, y);
+      ctx.lineTo(m.x - w * 0.35, y);
+      ctx.moveTo(m.x + w * 0.35, y);
+      ctx.lineTo(m.x + w, y);
+    }
+    ctx.stroke();
+  }
 
   for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait);
 
