@@ -98,6 +98,7 @@ interface Flyer {
   vy: number;
   g: number; // own gravity, so flight time is screen-independent
   armAt: number; // audio time at which a sustained hold becomes a high leap
+  hi: number; // 1 once this leap is known to be a high one -- draws wings
   holding: boolean;
   hue: number;
   gait: number;
@@ -818,23 +819,6 @@ function respondStart() {
 // The most recent flyer, so a press can keep hold of what it just launched.
 let lastLaunched: Flyer = null;
 
-// Height is information in hardcore, and the flight path is the only place it was
-// written down -- which fails exactly when two copies collide and knock each other
-// off their arcs. So the demo also leaves a bar at the height it MEANT to reach.
-// A bar can't be bounced.
-const marks: { x: number; y: number; hue: number; hi: number; age: number }[] = [];
-
-function mark(i: number, hi: number) {
-  marks.push({
-    x: herd[i].homeX,
-    // The same two numbers the leap itself is built from, read from core rather than
-    // restated here -- a target that disagrees with the arc is worse than no target.
-    y: groundY - (hi ? H * HIGH_F : launchParams(H, slot, NOTE_POWER).peak),
-    hue: herd[i].hue,
-    hi,
-    age: 0,
-  });
-}
 
 function launch(x: number, hue: number, power: number, dir: number, hot?: boolean, idx?: number) {
   const { peak, flight, g, vy0, reach } = launchParams(H, slot, power);
@@ -852,6 +836,7 @@ function launch(x: number, hue: number, power: number, dir: number, hot?: boolea
     g,
     armAt: 0,
     holding: false,
+    hi: 0,
     // Airborne copies keep a stride too, and a random one for crowd extras.
     gait: idx === undefined ? Math.random() * 6.28 : herd[idx].gait,
     idx: idx === undefined ? HUES.indexOf(hue) : idx,
@@ -1686,12 +1671,10 @@ function update(now: number) {
       const f = leap(q.i, q.power);
       // A replayed or previewed demo showed no height at all, so the one place you
       // could learn it was the live call -- the exact moment a collision can hide it.
-      if (q.hi !== undefined) {
-        mark(q.i, q.hi);
-        if (q.hi) {
-          f.armAt = now + HOLD_HIGH;
-          f.holding = true;
-        }
+      if (q.hi) {
+        f.armAt = now + HOLD_HIGH;
+        f.holding = true;
+        f.hi = 1;
       }
     }
   }
@@ -1709,11 +1692,11 @@ function update(now: number) {
       // In hardcore the call shows the height too: a high note visibly soars, which is
       // the only way the player can learn what to give back.
       const f = leap(seq[visIdx], NOTE_POWER);
-      if (hardcore) mark(seq[visIdx], hgt[visIdx]);
       if (hgt[visIdx]) {
-        // The herd "holds" its own note, through the very same mechanism.
+        // The unicorns "hold" their own note, through the very same mechanism.
         f.armAt = now + HOLD_HIGH;
         f.holding = true;
+        f.hi = 1; // known high from the start: the wings are out before it leaves
       }
       visIdx++;
     }
@@ -1801,7 +1784,16 @@ function poly(p: number[]) {
   ctx.closePath();
 }
 
-function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, glow: number, gait: number) {
+function drawUnicorn(
+  x: number,
+  y: number,
+  hue: number,
+  vx: number,
+  vy: number,
+  glow: number,
+  gait: number,
+  hi?: number
+) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(Math.atan2(vy, vx));
@@ -1862,6 +1854,22 @@ function drawUnicorn(x: number, y: number, hue: number, vx: number, vy: number, 
   ctx.lineTo(-20, 4 + sway);
   ctx.lineTo(-25, 8 - sway * 0.5);
   ctx.stroke();
+
+  // A tall jump is a WINGED unicorn. Height is information in hardcore, and putting
+  // it in the silhouette is the only place a collision can't take it away -- an arc
+  // can be knocked off course, a shape can't. It also reads at the launch rather than
+  // at the apex, which is when the player needs it.
+  //
+  // Behind the barrel, so the body still reads as the body.
+  if (hi) {
+    const flap = Math.sin(gait * 2.6) * 2.4;
+    ctx.fillStyle = pale;
+    poly([-1, -6, -15, -25 - flap, -3, -21 - flap, 5, -8]); // far wing, swept up and back
+    ctx.fill();
+    ctx.fillStyle = `hsl(${hue},96%,90%)`;
+    poly([-3, -4, -19, -14 + flap, -6, -13 + flap, 2, -6]); // near wing, paler still
+    ctx.fill();
+  }
 
   ctx.fillStyle = lit;
   poly([-14, 0, -9, -8, 1, -9, 9, -5, 10, 4, -2, 6, -11, 5]); // barrel
@@ -2330,6 +2338,7 @@ function frame(nowMs: number) {
         const v = Math.sqrt(2 * f.g * rise);
         if (v > -f.vy) f.vy = -v;
       }
+      f.hi = 1; // the hold has committed: wings out, same as the demo's
       f.glow = Math.min(1, f.glow + 0.4); // the surge should be felt as well as seen
     }
 
@@ -2473,34 +2482,8 @@ function frame(nowMs: number) {
   ctx.fillStyle = `rgba(150,220,255,${0.18 + pulse * 0.5})`;
   ctx.fillRect(0, groundY + 16, W, 2);
 
-  // Under the flyers, so a unicorn arriving at its bar is seen landing ON it.
-  for (let i = marks.length - 1; i >= 0; i--) {
-    const m = marks[i];
-    m.age += dt;
-    if (m.age > 1.5) {
-      marks.splice(i, 1);
-      continue;
-    }
-    // Holds full strength while the leap is in the air, then goes.
-    const a = Math.min(1, (1.5 - m.age) * 2.2);
-    const w = 26 * INK;
-    ctx.strokeStyle = `hsla(${m.hue},92%,72%,${a * 0.5})`;
-    ctx.lineWidth = 2 * INK;
-    ctx.beginPath();
-    // Two rungs for a high note, one for a low: the bar's height already says which,
-    // but only if you have the other height on screen to compare it against. The
-    // count says it on its own.
-    for (let k = 0; k <= m.hi; k++) {
-      const y = m.y + k * 7 * INK;
-      ctx.moveTo(m.x - w, y);
-      ctx.lineTo(m.x - w * 0.35, y);
-      ctx.moveTo(m.x + w * 0.35, y);
-      ctx.lineTo(m.x + w, y);
-    }
-    ctx.stroke();
-  }
-
-  for (const f of flyers) drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait);
+  for (const f of flyers)
+    drawUnicorn(f.x, f.y - 14, f.hue, f.vx, f.vy, f.glow, f.gait, f.hi);
 
   if (flashA > 0.002) {
     ctx.fillStyle = `rgba(196,224,255,${flashA * 0.45})`;
